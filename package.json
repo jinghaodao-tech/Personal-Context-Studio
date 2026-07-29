@@ -1,0 +1,14 @@
+{
+  "name": "personal-context-studio",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --experimental-strip-types apps/api/src/server.ts",
+    "cli": "node --experimental-strip-types apps/cli/src/main.ts",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "typecheck": "tsc --project tsconfig.json",
+    "check:encoding": "node scripts/check-encoding.mjs",
+    "verify": "npm run typecheck && npm run test && npm run check:encoding"
+  },
+  "engines": { "node": ">=24.0.0" }
+}
