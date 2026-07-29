@@ -12,6 +12,9 @@ async function main() {
   if (command === "template" && sub === "activate" && args[0]) return print(await request(`/v1/context-templates/${encodeURIComponent(args[0])}/activate`, { method: "POST" }));
   if (command === "entry" && sub === "list") return print(await request("/v1/context-entries"));
   if (command === "entry" && sub === "create" && args[0]) return print(await request("/v1/context-entries", { method: "POST", headers: { "content-type": "application/json" }, body: readFileSync(args[0], "utf8") }));
+  if (command === "document" && sub === "list") return print(await request("/v1/documents"));
+  if (command === "document" && sub === "sync" && args[0]) return print(await request("/v1/documents", { method: "POST", headers: { "content-type": "application/json" }, body: readFileSync(args[0], "utf8") }));
+  if (command === "document" && sub === "search" && args[0]) return print(await request("/v1/documents/search", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query: args.join(" ") }) }));
   if (command === "profile" && sub === "list") return print(await request("/v1/context-profiles"));
   if (command === "profile" && sub === "create" && args[0]) return print(await request("/v1/context-profiles", { method: "POST", headers: { "content-type": "application/json" }, body: readFileSync(args[0], "utf8") }));
   if (command === "profile" && sub === "preview" && args[0]) return print(await request("/v1/context-exports/preview", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ profileId: args[0], format: args[1] ?? "markdown" }) }));
@@ -19,6 +22,10 @@ async function main() {
   if (command === "import" && sub === "list") return print(await request("/v1/context-imports"));
   if (command === "import" && sub === "decide" && args[0] && args[1]) return print(await request(`/v1/context-imports/${encodeURIComponent(args[0])}/decision`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ decision: args[1], templateId: args[2], fieldKey: args[3] }) }));
   if (command === "export" && args[0]) return print(await request("/v1/context-exports", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ profileId: args[0], format: args[1] ?? "markdown" }) }));
+  if (command === "experiment" && sub === "request" && args[0]) return print(await request("/v1/experiment-template-requests", { method: "POST", headers: { "content-type": "application/json" }, body: readFileSync(args[0], "utf8") }));
+  if (command === "experiment" && sub === "list") return print(await request("/v1/experiment-template-requests"));
+  if (command === "experiment" && sub === "create-template" && args[0]) return print(await request(`/v1/experiment-template-requests/${encodeURIComponent(args[0])}/create-template`, { method: "POST" }));
+  if (command === "metheory" && sub === "analysis-snapshot") return print(await request(`/v1/metheory/analysis-snapshot${args[0] ? `?${args[0]}` : ""}`));
   throw new Error("usage: context-studio template|entry|profile|import|export ...");
 }
 main().catch((error) => { console.error(error instanceof Error ? error.message : error); process.exitCode = 1; });

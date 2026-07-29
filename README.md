@@ -2,9 +2,10 @@
 
 Personal Context Studio is a separate, local-first SQLite application for
 user-confirmed context that may be shared with AI tools. It is intentionally
-separate from MeTheory: MeTheory evaluates observations and hypotheses, while
-this project manages AI-facing templates, context values, sharing preferences,
-profiles, and exports.
+separate from MeTheory: this project owns Markdown-facing records, local search,
+local-AI extraction candidates and their review, templates, sharing preferences,
+profiles, and exports. MeTheory consumes only the user-confirmed analysis
+snapshot and evaluates observations and hypotheses.
 
 ## Run
 
@@ -18,9 +19,26 @@ The API listens only on `127.0.0.1:8300` by default. Set `PCS_DB` for a
 different local SQLite path. No cloud sync, remote AI integration, or secrets
 storage is included.
 
-## MeTheory import
+## MeTheory boundary
 
-Export from MeTheory with:
+Personal Context Studio never lets an AI read its entire database by default.
+Use `POST /v1/documents/search` to retrieve a bounded local result set, and use
+`GET /v1/metheory/analysis-snapshot` to provide only confirmed, shareable,
+non-highly-sensitive structured values to MeTheory.
+
+MeTheory creates a complex experiment request with
+`POST /v1/experiments/personal-context-template-requests`. Personal Context
+Studio receives it at `POST /v1/experiment-template-requests`, then turns it
+into a draft template only after an explicit user decision. Short experiment
+check-ins remain a MeTheory responsibility.
+
+`POST /v1/context-entries/candidates` records a local-AI extraction candidate
+against a local document. Its values begin unconfirmed and become eligible for
+analysis only after a per-value `PATCH /v1/context-entries/:id` review.
+
+## MeTheory imports
+
+MeTheory self-understanding candidates can still be imported with:
 
 ```powershell
 metheory personal-context export-migration --json

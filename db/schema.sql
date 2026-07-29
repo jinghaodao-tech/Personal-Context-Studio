@@ -12,3 +12,8 @@ CREATE TABLE IF NOT EXISTS context_exports (id TEXT PRIMARY KEY, profile_id TEXT
 CREATE TABLE IF NOT EXISTS privacy_audit_logs (id TEXT PRIMARY KEY, action TEXT NOT NULL, summary_json TEXT NOT NULL, created_at TEXT NOT NULL) STRICT;
 CREATE INDEX IF NOT EXISTS context_values_entry_idx ON context_values(entry_id,field_key);
 CREATE INDEX IF NOT EXISTS context_import_records_decision_idx ON context_import_records(decision,imported_at);
+CREATE TABLE IF NOT EXISTS context_documents (id TEXT PRIMARY KEY, external_source TEXT NOT NULL, external_source_id TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, recorded_at TEXT NOT NULL, source_updated_at TEXT, content_hash TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, archived_at TEXT, UNIQUE(external_source,external_source_id)) STRICT;
+CREATE INDEX IF NOT EXISTS context_documents_recorded_at_idx ON context_documents(recorded_at DESC);
+CREATE VIRTUAL TABLE IF NOT EXISTS context_document_fts USING fts5(document_id UNINDEXED,title,body);
+CREATE TABLE IF NOT EXISTS experiment_template_requests (id TEXT PRIMARY KEY, source_system TEXT NOT NULL CHECK(source_system IN('metheory')), source_hypothesis_id TEXT, payload_json TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN('pending','template_created','rejected')), template_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(source_system,id)) STRICT;
+CREATE INDEX IF NOT EXISTS experiment_template_requests_status_idx ON experiment_template_requests(status,created_at DESC);

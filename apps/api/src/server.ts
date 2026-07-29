@@ -1,8 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { eligibleForExport, formatExport, isSecretLike, newId, validateCandidate, validateField, type ContextTemplateField, type Sharing, type Sensitivity } from "../../../packages/domain/src/index.ts";
+import { PCS_ANALYSIS_SNAPSHOT_VERSION, validateExperimentTemplateRequest, type ExperimentTemplateRequestV1 } from "../../../packages/metheory-bridge/src/index.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 const databasePath = process.env.PCS_DB ?? resolve(root, "data", "personal-context-studio.sqlite3");
@@ -32,12 +34,85 @@ function exportPreview(profileId: string, format: "markdown" | "json" | "agents"
   return { content: content.slice(0, maximum), omittedCount: latest.size - safe.length + (content.length > maximum ? 1 : 0), profile };
 }
 
+function validTimestamp(value: unknown): value is string { return typeof value === "string" && !Number.isNaN(Date.parse(value)); }
+function documentHash(value: string) { return createHash("sha256").update(value).digest("hex"); }
+function ftsTerms(value: string) { return value.trim().split(/\s+/).map((term) => term.replaceAll('"', "")).filter(Boolean).slice(0, 12).map((term) => `"${term}"`).join(" AND "); }
+
+function analysisSnapshot(startAt?: string, endAt?: string) {
+  const lower = validTimestamp(startAt) ? startAt : "0000-01-01T00:00:00.000Z";
+  const upper = validTimestamp(endAt) ? endAt : "9999-12-31T23:59:59.999Z";
+  const rows = db.prepare("SELECT e.id AS entry_id,e.template_id,e.created_at,v.field_key,v.value_json,v.source_id,v.recorded_at,f.label,f.value_type,f.options_json FROM context_entries e JOIN context_values v ON v.entry_id=e.id JOIN context_template_fields f ON f.template_id=e.template_id AND f.field_key=v.field_key WHERE e.status='active' AND v.user_confirmed=1 AND v.sharing IN ('always','purpose_only') AND v.sensitivity!='highly_sensitive' AND v.recorded_at>=? AND v.recorded_at<=? ORDER BY v.recorded_at,e.id").all(lower, upper) as any[];
+  const records = new Map<string, { id: string; recordedAt: string; title: string; sourceDocumentId: string | null; values: any[] }>();
+  let invalid = 0;
+  for (const row of rows) {
+    let value: unknown;
+    try { value = JSON.parse(row.value_json); } catch { invalid += 1; continue; }
+    if (isSecretLike(typeof value === "string" ? value : JSON.stringify(value))) { invalid += 1; continue; }
+    const record: { id: string; recordedAt: string; title: string; sourceDocumentId: string | null; values: any[] } = records.get(row.entry_id) ?? { id: row.entry_id, recordedAt: row.recorded_at, title: String(row.template_id), sourceDocumentId: typeof row.source_id === "string" && row.source_id.startsWith("doc_") ? row.source_id : null, values: [] };
+    let allowedValues: Array<{ key: string; label: string }> | undefined;
+    try { const options = JSON.parse(row.options_json); if (Array.isArray(options)) allowedValues = options.filter((item): item is { key: string; label: string } => Boolean(item) && typeof item.key === "string" && typeof item.label === "string"); } catch { /* an invalid option list is not exported */ }
+    record.values.push({ fieldKey: row.field_key, label: row.label, valueType: row.value_type, value, templateId: row.template_id, sourceDocumentId: record.sourceDocumentId, allowedValues });
+    records.set(row.entry_id, record);
+  }
+  const unconfirmed = Number((db.prepare("SELECT COUNT(*) AS count FROM context_values v JOIN context_entries e ON e.id=v.entry_id WHERE e.status='active' AND v.user_confirmed=0 AND v.recorded_at>=? AND v.recorded_at<=?").get(lower, upper) as any).count);
+  const nonShareable = Number((db.prepare("SELECT COUNT(*) AS count FROM context_values v JOIN context_entries e ON e.id=v.entry_id WHERE e.status='active' AND (v.sharing IN ('private','never') OR v.sensitivity='highly_sensitive') AND v.recorded_at>=? AND v.recorded_at<=?").get(lower, upper) as any).count);
+  return { schemaVersion: PCS_ANALYSIS_SNAPSHOT_VERSION, generatedAt: now(), records: [...records.values()], excluded: { unconfirmed, nonShareable, invalid } };
+}
+
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const parts = url.pathname.split("/").filter(Boolean);
     if (request.method === "GET" && url.pathname === "/health") return send(response, 200, { ok: true, service: "personal-context-studio" });
     if (request.method === "GET" && url.pathname === "/") { response.writeHead(200, { "content-type": "text/html; charset=utf-8" }); return response.end("<!doctype html><title>Personal Context Studio</title><main><h1>Personal Context Studio</h1><p>Local-first personal context for AI sharing.</p><p>Use the local API or CLI to create templates, entries, profiles, imports, and exports.</p></main>"); }
+    if (request.method === "GET" && url.pathname === "/v1/documents") return send(response, 200, { items: db.prepare("SELECT id,external_source,external_source_id,title,recorded_at,source_updated_at,created_at,updated_at FROM context_documents WHERE archived_at IS NULL ORDER BY recorded_at DESC").all() });
+    if (request.method === "POST" && url.pathname === "/v1/documents") {
+      const input = await body(request); const externalSource = text(input.externalSource), externalSourceId = text(input.externalSourceId), title = text(input.title), documentBody = typeof input.body === "string" ? input.body : "";
+      if (!externalSource || !externalSourceId || !title || !documentBody) return send(response, 400, { error: "document_invalid" });
+      const timestamp = now(), candidateRecordedAt = validTimestamp(input.recordedAt) ? input.recordedAt : timestamp, sourceUpdatedAt = validTimestamp(input.sourceUpdatedAt) ? input.sourceUpdatedAt : null;
+      const existing = db.prepare("SELECT * FROM context_documents WHERE external_source=? AND external_source_id=?").get(externalSource, externalSourceId) as any;
+      const id = existing?.id ?? newId("doc"), recordedAt = existing?.recorded_at ?? candidateRecordedAt;
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        if (existing) db.prepare("UPDATE context_documents SET title=?,body=?,source_updated_at=?,content_hash=?,updated_at=?,archived_at=NULL WHERE id=?").run(title, documentBody, sourceUpdatedAt, documentHash(documentBody), timestamp, id);
+        else db.prepare("INSERT INTO context_documents(id,external_source,external_source_id,title,body,recorded_at,source_updated_at,content_hash,created_at,updated_at,archived_at) VALUES(?,?,?,?,?,?,?,?,?,?,NULL)").run(id, externalSource, externalSourceId, title, documentBody, recordedAt, sourceUpdatedAt, documentHash(documentBody), timestamp, timestamp);
+        db.prepare("DELETE FROM context_document_fts WHERE document_id=?").run(id);
+        db.prepare("INSERT INTO context_document_fts(document_id,title,body) VALUES(?,?,?)").run(id, title, documentBody);
+        db.exec("COMMIT");
+      } catch (error) { db.exec("ROLLBACK"); throw error; }
+      return send(response, existing ? 200 : 201, { id, created: !existing, recordedAt, sourceUpdatedAt });
+    }
+    if (request.method === "GET" && parts[0] === "v1" && parts[1] === "documents" && parts[2]) { const item = db.prepare("SELECT * FROM context_documents WHERE id=? AND archived_at IS NULL").get(parts[2]); return item ? send(response, 200, { item }) : send(response, 404, { error: "document_not_found" }); }
+    if (request.method === "POST" && url.pathname === "/v1/documents/search") {
+      const input = await body(request); const terms = ftsTerms(text(input.query)); if (!terms) return send(response, 400, { error: "search_query_required" });
+      const items = db.prepare("SELECT d.id,d.title,d.recorded_at,d.source_updated_at,snippet(context_document_fts,2,'','','...',18) AS snippet FROM context_document_fts JOIN context_documents d ON d.id=context_document_fts.document_id WHERE context_document_fts MATCH ? AND d.archived_at IS NULL ORDER BY rank LIMIT 50").all(terms);
+      return send(response, 200, { items });
+    }
+    if (request.method === "GET" && url.pathname === "/v1/metheory/analysis-snapshot") return send(response, 200, analysisSnapshot(url.searchParams.get("from") ?? undefined, url.searchParams.get("to") ?? undefined));
+    if (request.method === "GET" && url.pathname === "/v1/experiment-template-requests") return send(response, 200, { items: db.prepare("SELECT id,source_system,source_hypothesis_id,payload_json,status,template_id,created_at,updated_at FROM experiment_template_requests ORDER BY created_at DESC").all() });
+    if (request.method === "POST" && url.pathname === "/v1/experiment-template-requests") {
+      const input = validateExperimentTemplateRequest(await body(request)); const existing = db.prepare("SELECT id,status,template_id FROM experiment_template_requests WHERE id=?").get(input.id) as any;
+      if (existing) return send(response, 200, { id: existing.id, status: existing.status, templateId: existing.template_id, duplicate: true });
+      db.prepare("INSERT INTO experiment_template_requests(id,source_system,source_hypothesis_id,payload_json,status,template_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)").run(input.id, input.sourceSystem, input.hypothesisId, JSON.stringify(input), "pending", null, input.createdAt, now());
+      audit("request_experiment_template", { requestId: input.id, hypothesisId: input.hypothesisId });
+      return send(response, 201, { id: input.id, status: "pending" });
+    }
+    if (request.method === "POST" && parts.join("/").match(/^v1\/experiment-template-requests\/[^/]+\/create-template$/)) {
+      const requestRecord = db.prepare("SELECT * FROM experiment_template_requests WHERE id=? AND status='pending'").get(parts[2]) as any;
+      if (!requestRecord) return send(response, 404, { error: "experiment_template_request_not_found" });
+      const requestInput = validateExperimentTemplateRequest(JSON.parse(requestRecord.payload_json)) as ExperimentTemplateRequestV1;
+      const requestedFields = requestInput.requestedFields.map((field, index) => validateField({ fieldKey: field.fieldKey, label: field.label, description: "Requested by MeTheory for an experiment.", valueType: field.valueType, required: field.required, displayOrder: index + 1, options: field.options, sharingDefault: "purpose_only", sensitivity: "normal", reason: field.reason }));
+      if (!requestedFields.length) return send(response, 400, { error: "experiment_template_fields_required" });
+      const templateId = newId("template"), timestamp = now(); db.exec("BEGIN IMMEDIATE");
+      try {
+        db.prepare("INSERT INTO context_templates(id,name,description,purpose,status,version,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)").run(templateId, requestInput.title, requestInput.purpose, "metheory_experiment", "draft", 1, timestamp, timestamp);
+        const insert = db.prepare("INSERT INTO context_template_fields(id,template_id,field_key,label,description,value_type,required,display_order,options_json,sharing_default,sensitivity,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
+        for (const field of requestedFields) insert.run(newId("field"), templateId, field.fieldKey, field.label, field.description ?? "", field.valueType, field.required ? 1 : 0, field.displayOrder, JSON.stringify(field.options ?? []), field.sharingDefault, field.sensitivity, field.reason);
+        db.prepare("UPDATE experiment_template_requests SET status='template_created',template_id=?,updated_at=? WHERE id=?").run(templateId, timestamp, parts[2]); db.exec("COMMIT");
+      } catch (error) { db.exec("ROLLBACK"); throw error; }
+      audit("create_experiment_template", { requestId: parts[2], templateId });
+      return send(response, 201, { requestId: parts[2], template: templateDetail(templateId) });
+    }
     if (request.method === "GET" && url.pathname === "/v1/context-templates") return send(response, 200, { items: db.prepare("SELECT * FROM context_templates WHERE status!='archived' ORDER BY updated_at DESC").all() });
     if (request.method === "POST" && url.pathname === "/v1/context-templates") {
       const input = await body(request); const name = text(input.name); const purpose = text(input.purpose) || "custom"; const rawFields = Array.isArray(input.fields) ? input.fields as ContextTemplateField[] : [];
@@ -48,11 +123,32 @@ const server = createServer(async (request, response) => {
     }
     if (request.method === "GET" && parts[0] === "v1" && parts[1] === "context-templates" && parts[2]) { const item = templateDetail(parts[2]); return item ? send(response, 200, { item }) : send(response, 404, { error: "template_not_found" }); }
     if (request.method === "POST" && parts.join("/").match(/^v1\/context-templates\/[^/]+\/activate$/)) { const updated = db.prepare("UPDATE context_templates SET status='active',updated_at=? WHERE id=? AND status='draft'").run(now(), parts[2]); return updated.changes ? send(response, 200, { activated: true }) : send(response, 404, { error: "template_not_found_or_not_draft" }); }
+    if (request.method === "POST" && url.pathname === "/v1/context-entries/candidates") {
+      const input = await body(request); const template = templateDetail(text(input.templateId)); const values = input.values && typeof input.values === "object" ? input.values as Record<string, unknown> : null; const sourceDocumentId = text(input.sourceDocumentId);
+      const document = sourceDocumentId ? db.prepare("SELECT id,recorded_at FROM context_documents WHERE id=? AND archived_at IS NULL").get(sourceDocumentId) as any : null;
+      if (!template || !values || !document) return send(response, 400, { error: "candidate_invalid" });
+      const id = newId("entry"), timestamp = now(), recordedAt = validTimestamp(input.recordedAt) ? input.recordedAt : document.recorded_at;
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        db.prepare("INSERT INTO context_entries(id,template_id,template_version,status,created_at,updated_at) VALUES(?,?,?,?,?,?)").run(id, template.id, template.version, "draft", timestamp, timestamp);
+        const insert = db.prepare("INSERT INTO context_values(id,entry_id,field_key,value_json,source,source_id,user_confirmed,sharing,sensitivity,recorded_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)");
+        for (const field of template.fields) {
+          const value = values[field.field_key]; if (value === undefined) continue; if (isSecretLike(value)) throw new Error("secret_value_prohibited");
+          const sharing = allowedSharing.has(text((input.sharing as any)?.[field.field_key]) as Sharing) ? (input.sharing as any)[field.field_key] : field.sharing_default;
+          const sensitivity = allowedSensitivity.has(text((input.sensitivity as any)?.[field.field_key]) as Sensitivity) ? (input.sensitivity as any)[field.field_key] : field.sensitivity;
+          insert.run(newId("value"), id, field.field_key, JSON.stringify(value), "manual_import", sourceDocumentId, 0, sharing, sensitivity, recordedAt, timestamp);
+        }
+        db.prepare("UPDATE context_entries SET status='active',updated_at=? WHERE id=?").run(timestamp, id); db.exec("COMMIT");
+      } catch (error) { db.exec("ROLLBACK"); throw error; }
+      audit("create_local_ai_candidate", { entryId: id, sourceDocumentId, provider: text(input.provider) || "local" });
+      return send(response, 201, { id, reviewRequired: true });
+    }
     if (request.method === "GET" && url.pathname === "/v1/context-entries") return send(response, 200, { items: db.prepare("SELECT * FROM context_entries WHERE status!='archived' ORDER BY updated_at DESC").all() });
     if (request.method === "POST" && url.pathname === "/v1/context-entries") {
       const input = await body(request); const template = templateDetail(text(input.templateId)); const values = input.values && typeof input.values === "object" ? input.values as Record<string, unknown> : null; if (!template || !values) return send(response, 400, { error: "entry_invalid" });
       const id = newId("entry"), createdAt = now(); db.exec("BEGIN IMMEDIATE"); try { db.prepare("INSERT INTO context_entries(id,template_id,template_version,status,created_at,updated_at) VALUES(?,?,?,?,?,?)").run(id, template.id, template.version, "draft", createdAt, createdAt); const insert = db.prepare("INSERT INTO context_values(id,entry_id,field_key,value_json,source,source_id,user_confirmed,sharing,sensitivity,recorded_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)"); for (const field of template.fields) { const value = values[field.field_key]; if (field.required && (value === undefined || value === null || value === "")) throw new Error("required_context_value_missing"); if (value === undefined) continue; if (isSecretLike(value)) throw new Error("secret_value_prohibited"); const sharing = allowedSharing.has(text((input.sharing as any)?.[field.field_key]) as Sharing) ? (input.sharing as any)[field.field_key] : field.sharing_default; const sensitivity = allowedSensitivity.has(text((input.sensitivity as any)?.[field.field_key]) as Sensitivity) ? (input.sensitivity as any)[field.field_key] : field.sensitivity; insert.run(newId("value"), id, field.field_key, JSON.stringify(value), "user_input", null, 1, sharing, sensitivity, createdAt, createdAt); } db.prepare("UPDATE context_entries SET status='active',updated_at=? WHERE id=?").run(createdAt, id); db.exec("COMMIT"); } catch (error) { db.exec("ROLLBACK"); throw error; } return send(response, 201, { id });
     }
+    if (request.method === "GET" && parts[0] === "v1" && parts[1] === "context-entries" && parts[2]) { const item = db.prepare("SELECT * FROM context_entries WHERE id=? AND status!='archived'").get(parts[2]) as any; if (!item) return send(response, 404, { error: "entry_not_found" }); return send(response, 200, { item, values: db.prepare("SELECT id,field_key,value_json,source,source_id,user_confirmed,sharing,sensitivity,recorded_at,updated_at FROM context_values WHERE entry_id=? ORDER BY field_key").all(parts[2]) }); }
     if (request.method === "PATCH" && parts[0] === "v1" && parts[1] === "context-entries" && parts[2]) { const input = await body(request); const fieldKey = text(input.fieldKey); if (!fieldKey || isSecretLike(input.value)) return send(response, 400, { error: "context_value_invalid" }); const result = db.prepare("UPDATE context_values SET value_json=?,user_confirmed=1,updated_at=? WHERE entry_id=? AND field_key=?").run(JSON.stringify(input.value), now(), parts[2], fieldKey); return result.changes ? send(response, 200, { updated: true }) : send(response, 404, { error: "context_value_not_found" }); }
     if (request.method === "DELETE" && parts[0] === "v1" && parts[1] === "context-entries" && parts[2]) { db.prepare("UPDATE context_entries SET status='archived',updated_at=? WHERE id=?").run(now(), parts[2]); audit("archive_entry", { entryId: parts[2] }); return send(response, 200, { archived: true }); }
     if (request.method === "GET" && url.pathname === "/v1/context-profiles") return send(response, 200, { items: db.prepare("SELECT * FROM context_profiles ORDER BY updated_at DESC").all() });
