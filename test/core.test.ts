@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { spawn } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { eligibleForExport, formatExport, isSecretLike, validateCandidate, validateField } from "../packages/domain/src/index.ts";
+import { listMarkdownFiles, readMarkdownSnapshot, resolveMarkdownPath } from "../packages/documents/src/index.ts";
 import { validateAnalysisSnapshot, validateExperimentTemplateRequest } from "../packages/metheory-bridge/src/index.ts";
 
 test("context fields and MeTheory candidates have explicit contracts", () => {
@@ -22,3 +27,55 @@ test("MeTheory bridge contracts reject malformed local handoffs", () => {
   assert.equal(validateExperimentTemplateRequest({ schemaVersion: "pcs-experiment-template-request-v1", id: "request_1", sourceSystem: "metheory", hypothesisId: null, title: "Focus experiment", purpose: "Compare work conditions", durationDays: 7, requestedFields: [], createdAt: "2026-07-01T00:00:00.000Z" }).id, "request_1");
   assert.throws(() => validateExperimentTemplateRequest({ schemaVersion: "pcs-experiment-template-request-v1", sourceSystem: "metheory" }));
 });
+
+test("Markdown documents stay in the configured root and use canonical dates", () => {
+  const directory = mkdtempSync(join(tmpdir(), "pcs-documents-"));
+  const outside = mkdtempSync(join(tmpdir(), "pcs-outside-"));
+  try {
+    mkdirSync(join(directory, "daily"));
+    writeFileSync(join(directory, "daily", "2026-07-10.md"), "---\ndate: 2026-07-09\ntitle: Daily note\n---\nbody", "utf8");
+    writeFileSync(join(outside, "private.md"), "outside", "utf8");
+    const snapshot = readMarkdownSnapshot(directory, "daily/2026-07-10.md");
+    assert.equal(snapshot.title, "Daily note");
+    assert.equal(snapshot.recordedAt, "2026-07-09T00:00:00.000Z");
+    assert.deepEqual(listMarkdownFiles(directory), ["daily/2026-07-10.md"]);
+    assert.throws(() => resolveMarkdownPath(directory, join(outside, "private.md")), /document_path_invalid/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test("MCP surface exposes read-only tools", async () => {
+  const child = spawnMcp();
+  try {
+    const response = await child.request({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
+    const names = response.result.tools.map((tool: { name: string }) => tool.name);
+    assert.deepEqual(names, ["search_documents", "get_document_excerpt", "list_reviewed_context", "list_pending_reviews"]);
+    assert.equal(names.some((name: string) => /create|update|delete|write/.test(name)), false);
+  } finally {
+    child.close();
+  }
+});
+
+function spawnMcp() {
+  const child = spawn(process.execPath, ["--experimental-strip-types", "apps/mcp/src/main.ts"], { stdio: ["pipe", "pipe", "ignore"] });
+  child.stdout.setEncoding("utf8");
+  let buffer = "";
+  const waiting: Array<(value: any) => void> = [];
+  child.stdout.on("data", (chunk: string) => {
+    buffer += chunk;
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() ?? "";
+    for (const line of lines) if (line.trim()) waiting.shift()?.(JSON.parse(line));
+  });
+  return {
+    request(value: unknown) {
+      return new Promise<any>((resolve) => {
+        waiting.push(resolve);
+        child.stdin.write(`${JSON.stringify(value)}\n`);
+      });
+    },
+    close() { child.kill(); },
+  };
+}

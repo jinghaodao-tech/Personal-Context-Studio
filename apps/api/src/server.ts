@@ -1,14 +1,16 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { eligibleForExport, formatExport, isSecretLike, newId, validateCandidate, validateField, type ContextTemplateField, type Sharing, type Sensitivity } from "../../../packages/domain/src/index.ts";
 import { PCS_ANALYSIS_SNAPSHOT_VERSION, validateExperimentTemplateRequest, type ExperimentTemplateRequestV1 } from "../../../packages/metheory-bridge/src/index.ts";
+import { excerpt, readMarkdownSnapshot } from "../../../packages/documents/src/index.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 const databasePath = process.env.PCS_DB ?? resolve(root, "data", "personal-context-studio.sqlite3");
+const notesRoot = resolve(process.env.PCS_NOTES_DIR ?? resolve(root, "notes"));
 mkdirSync(dirname(databasePath), { recursive: true });
+mkdirSync(notesRoot, { recursive: true });
 const db = new DatabaseSync(databasePath);
 db.exec(readFileSync(resolve(root, "db", "schema.sql"), "utf8"));
 const now = () => new Date().toISOString();
@@ -35,8 +37,24 @@ function exportPreview(profileId: string, format: "markdown" | "json" | "agents"
 }
 
 function validTimestamp(value: unknown): value is string { return typeof value === "string" && !Number.isNaN(Date.parse(value)); }
-function documentHash(value: string) { return createHash("sha256").update(value).digest("hex"); }
 function ftsTerms(value: string) { return value.trim().split(/\s+/).map((term) => term.replaceAll('"', "")).filter(Boolean).slice(0, 12).map((term) => `"${term}"`).join(" AND "); }
+
+function upsertDocument(inputPath: string) {
+  const snapshot = readMarkdownSnapshot(notesRoot, inputPath);
+  const existing = db.prepare("SELECT * FROM context_documents WHERE file_path=?").get(snapshot.relativePath) as any;
+  const renamed = existing ? undefined : db.prepare("SELECT * FROM context_documents WHERE content_hash=? AND archived_at IS NOT NULL ORDER BY updated_at DESC LIMIT 1").get(snapshot.contentHash) as any;
+  const current = existing ?? renamed;
+  const id = current?.id ?? newId("doc"), timestamp = now(), recordedAt = current?.recorded_at ?? snapshot.recordedAt;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    if (current) db.prepare("UPDATE context_documents SET file_path=?,title=?,source_updated_at=?,content_hash=?,file_size=?,updated_at=?,archived_at=NULL WHERE id=?").run(snapshot.relativePath, snapshot.title, snapshot.sourceUpdatedAt, snapshot.contentHash, snapshot.size, timestamp, id);
+    else db.prepare("INSERT INTO context_documents(id,file_path,title,recorded_at,source_updated_at,content_hash,file_size,created_at,updated_at,archived_at) VALUES(?,?,?,?,?,?,?,?,?,NULL)").run(id, snapshot.relativePath, snapshot.title, recordedAt, snapshot.sourceUpdatedAt, snapshot.contentHash, snapshot.size, timestamp, timestamp);
+    db.prepare("DELETE FROM context_document_fts WHERE document_id=?").run(id);
+    db.prepare("INSERT INTO context_document_fts(document_id,title,body) VALUES(?,?,?)").run(id, snapshot.title, snapshot.content);
+    db.exec("COMMIT");
+  } catch (error) { db.exec("ROLLBACK"); throw error; }
+  return { id, created: !current, renamed: Boolean(renamed), filePath: snapshot.relativePath, recordedAt, sourceUpdatedAt: snapshot.sourceUpdatedAt, contentHash: snapshot.contentHash };
+}
 
 function analysisSnapshot(startAt?: string, endAt?: string) {
   const lower = validTimestamp(startAt) ? startAt : "0000-01-01T00:00:00.000Z";
@@ -65,29 +83,20 @@ const server = createServer(async (request, response) => {
     const parts = url.pathname.split("/").filter(Boolean);
     if (request.method === "GET" && url.pathname === "/health") return send(response, 200, { ok: true, service: "personal-context-studio" });
     if (request.method === "GET" && url.pathname === "/") { response.writeHead(200, { "content-type": "text/html; charset=utf-8" }); return response.end("<!doctype html><title>Personal Context Studio</title><main><h1>Personal Context Studio</h1><p>Local-first personal context for AI sharing.</p><p>Use the local API or CLI to create templates, entries, profiles, imports, and exports.</p></main>"); }
-    if (request.method === "GET" && url.pathname === "/v1/documents") return send(response, 200, { items: db.prepare("SELECT id,external_source,external_source_id,title,recorded_at,source_updated_at,created_at,updated_at FROM context_documents WHERE archived_at IS NULL ORDER BY recorded_at DESC").all() });
+    if (request.method === "GET" && url.pathname === "/v1/documents") return send(response, 200, { items: db.prepare("SELECT id,file_path,title,recorded_at,source_updated_at,content_hash,file_size,created_at,updated_at FROM context_documents WHERE archived_at IS NULL ORDER BY recorded_at DESC").all() });
     if (request.method === "POST" && url.pathname === "/v1/documents") {
-      const input = await body(request); const externalSource = text(input.externalSource), externalSourceId = text(input.externalSourceId), title = text(input.title), documentBody = typeof input.body === "string" ? input.body : "";
-      if (!externalSource || !externalSourceId || !title || !documentBody) return send(response, 400, { error: "document_invalid" });
-      const timestamp = now(), candidateRecordedAt = validTimestamp(input.recordedAt) ? input.recordedAt : timestamp, sourceUpdatedAt = validTimestamp(input.sourceUpdatedAt) ? input.sourceUpdatedAt : null;
-      const existing = db.prepare("SELECT * FROM context_documents WHERE external_source=? AND external_source_id=?").get(externalSource, externalSourceId) as any;
-      const id = existing?.id ?? newId("doc"), recordedAt = existing?.recorded_at ?? candidateRecordedAt;
-      db.exec("BEGIN IMMEDIATE");
-      try {
-        if (existing) db.prepare("UPDATE context_documents SET title=?,body=?,source_updated_at=?,content_hash=?,updated_at=?,archived_at=NULL WHERE id=?").run(title, documentBody, sourceUpdatedAt, documentHash(documentBody), timestamp, id);
-        else db.prepare("INSERT INTO context_documents(id,external_source,external_source_id,title,body,recorded_at,source_updated_at,content_hash,created_at,updated_at,archived_at) VALUES(?,?,?,?,?,?,?,?,?,?,NULL)").run(id, externalSource, externalSourceId, title, documentBody, recordedAt, sourceUpdatedAt, documentHash(documentBody), timestamp, timestamp);
-        db.prepare("DELETE FROM context_document_fts WHERE document_id=?").run(id);
-        db.prepare("INSERT INTO context_document_fts(document_id,title,body) VALUES(?,?,?)").run(id, title, documentBody);
-        db.exec("COMMIT");
-      } catch (error) { db.exec("ROLLBACK"); throw error; }
-      return send(response, existing ? 200 : 201, { id, created: !existing, recordedAt, sourceUpdatedAt });
+      const input = await body(request); const filePath = text(input.filePath); if (!filePath) return send(response, 400, { error: "document_path_required" });
+      const result = upsertDocument(filePath); return send(response, result.created ? 201 : 200, result);
     }
-    if (request.method === "GET" && parts[0] === "v1" && parts[1] === "documents" && parts[2]) { const item = db.prepare("SELECT * FROM context_documents WHERE id=? AND archived_at IS NULL").get(parts[2]); return item ? send(response, 200, { item }) : send(response, 404, { error: "document_not_found" }); }
+    if (request.method === "GET" && parts[0] === "v1" && parts[1] === "documents" && parts.length === 3) { const item = db.prepare("SELECT * FROM context_documents WHERE id=? AND archived_at IS NULL").get(parts[2]); return item ? send(response, 200, { item }) : send(response, 404, { error: "document_not_found" }); }
+    if (request.method === "GET" && parts[0] === "v1" && parts[1] === "documents" && parts[2] && parts[3] === "excerpt") { const item = db.prepare("SELECT file_path FROM context_documents WHERE id=? AND archived_at IS NULL").get(parts[2]) as any; if (!item) return send(response, 404, { error: "document_not_found" }); const snapshot = readMarkdownSnapshot(notesRoot, item.file_path); return send(response, 200, { documentId: parts[2], filePath: snapshot.relativePath, contentHash: snapshot.contentHash, excerpt: excerpt(snapshot.content, Number(url.searchParams.get("maxCharacters") ?? 2000)) }); }
+    if (request.method === "DELETE" && parts[0] === "v1" && parts[1] === "documents" && parts[2]) { const timestamp = now(); db.exec("BEGIN IMMEDIATE"); try { const result = db.prepare("UPDATE context_documents SET archived_at=?,updated_at=? WHERE id=? AND archived_at IS NULL").run(timestamp, timestamp, parts[2]); db.prepare("DELETE FROM context_document_fts WHERE document_id=?").run(parts[2]); db.exec("COMMIT"); return result.changes ? send(response, 200, { archived: true }) : send(response, 404, { error: "document_not_found" }); } catch (error) { db.exec("ROLLBACK"); throw error; } }
     if (request.method === "POST" && url.pathname === "/v1/documents/search") {
       const input = await body(request); const terms = ftsTerms(text(input.query)); if (!terms) return send(response, 400, { error: "search_query_required" });
       const items = db.prepare("SELECT d.id,d.title,d.recorded_at,d.source_updated_at,snippet(context_document_fts,2,'','','...',18) AS snippet FROM context_document_fts JOIN context_documents d ON d.id=context_document_fts.document_id WHERE context_document_fts MATCH ? AND d.archived_at IS NULL ORDER BY rank LIMIT 50").all(terms);
       return send(response, 200, { items });
     }
+    if (request.method === "GET" && url.pathname === "/v1/reviews/pending") { const items = db.prepare("SELECT e.id AS entry_id,e.template_id,c.document_id,c.source_content_hash,d.content_hash,d.file_path,COUNT(v.id) AS pending_values FROM context_entries e JOIN context_entry_candidates c ON c.entry_id=e.id JOIN context_documents d ON d.id=c.document_id JOIN context_values v ON v.entry_id=e.id AND v.user_confirmed=0 WHERE e.status='active' GROUP BY e.id ORDER BY e.created_at DESC").all() as any[]; return send(response, 200, { items: items.map((item) => ({ ...item, stale: item.source_content_hash !== item.content_hash })) }); }
     if (request.method === "GET" && url.pathname === "/v1/metheory/analysis-snapshot") return send(response, 200, analysisSnapshot(url.searchParams.get("from") ?? undefined, url.searchParams.get("to") ?? undefined));
     if (request.method === "GET" && url.pathname === "/v1/experiment-template-requests") return send(response, 200, { items: db.prepare("SELECT id,source_system,source_hypothesis_id,payload_json,status,template_id,created_at,updated_at FROM experiment_template_requests ORDER BY created_at DESC").all() });
     if (request.method === "POST" && url.pathname === "/v1/experiment-template-requests") {
@@ -125,7 +134,7 @@ const server = createServer(async (request, response) => {
     if (request.method === "POST" && parts.join("/").match(/^v1\/context-templates\/[^/]+\/activate$/)) { const updated = db.prepare("UPDATE context_templates SET status='active',updated_at=? WHERE id=? AND status='draft'").run(now(), parts[2]); return updated.changes ? send(response, 200, { activated: true }) : send(response, 404, { error: "template_not_found_or_not_draft" }); }
     if (request.method === "POST" && url.pathname === "/v1/context-entries/candidates") {
       const input = await body(request); const template = templateDetail(text(input.templateId)); const values = input.values && typeof input.values === "object" ? input.values as Record<string, unknown> : null; const sourceDocumentId = text(input.sourceDocumentId);
-      const document = sourceDocumentId ? db.prepare("SELECT id,recorded_at FROM context_documents WHERE id=? AND archived_at IS NULL").get(sourceDocumentId) as any : null;
+      const document = sourceDocumentId ? db.prepare("SELECT id,recorded_at,content_hash FROM context_documents WHERE id=? AND archived_at IS NULL").get(sourceDocumentId) as any : null;
       if (!template || !values || !document) return send(response, 400, { error: "candidate_invalid" });
       const id = newId("entry"), timestamp = now(), recordedAt = validTimestamp(input.recordedAt) ? input.recordedAt : document.recorded_at;
       db.exec("BEGIN IMMEDIATE");
@@ -138,6 +147,7 @@ const server = createServer(async (request, response) => {
           const sensitivity = allowedSensitivity.has(text((input.sensitivity as any)?.[field.field_key]) as Sensitivity) ? (input.sensitivity as any)[field.field_key] : field.sensitivity;
           insert.run(newId("value"), id, field.field_key, JSON.stringify(value), "manual_import", sourceDocumentId, 0, sharing, sensitivity, recordedAt, timestamp);
         }
+        db.prepare("INSERT INTO context_entry_candidates(entry_id,document_id,source_content_hash,provider,created_at) VALUES(?,?,?,?,?)").run(id, sourceDocumentId, document.content_hash, text(input.provider) || "local", timestamp);
         db.prepare("UPDATE context_entries SET status='active',updated_at=? WHERE id=?").run(timestamp, id); db.exec("COMMIT");
       } catch (error) { db.exec("ROLLBACK"); throw error; }
       audit("create_local_ai_candidate", { entryId: id, sourceDocumentId, provider: text(input.provider) || "local" });
@@ -149,7 +159,7 @@ const server = createServer(async (request, response) => {
       const id = newId("entry"), createdAt = now(); db.exec("BEGIN IMMEDIATE"); try { db.prepare("INSERT INTO context_entries(id,template_id,template_version,status,created_at,updated_at) VALUES(?,?,?,?,?,?)").run(id, template.id, template.version, "draft", createdAt, createdAt); const insert = db.prepare("INSERT INTO context_values(id,entry_id,field_key,value_json,source,source_id,user_confirmed,sharing,sensitivity,recorded_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)"); for (const field of template.fields) { const value = values[field.field_key]; if (field.required && (value === undefined || value === null || value === "")) throw new Error("required_context_value_missing"); if (value === undefined) continue; if (isSecretLike(value)) throw new Error("secret_value_prohibited"); const sharing = allowedSharing.has(text((input.sharing as any)?.[field.field_key]) as Sharing) ? (input.sharing as any)[field.field_key] : field.sharing_default; const sensitivity = allowedSensitivity.has(text((input.sensitivity as any)?.[field.field_key]) as Sensitivity) ? (input.sensitivity as any)[field.field_key] : field.sensitivity; insert.run(newId("value"), id, field.field_key, JSON.stringify(value), "user_input", null, 1, sharing, sensitivity, createdAt, createdAt); } db.prepare("UPDATE context_entries SET status='active',updated_at=? WHERE id=?").run(createdAt, id); db.exec("COMMIT"); } catch (error) { db.exec("ROLLBACK"); throw error; } return send(response, 201, { id });
     }
     if (request.method === "GET" && parts[0] === "v1" && parts[1] === "context-entries" && parts[2]) { const item = db.prepare("SELECT * FROM context_entries WHERE id=? AND status!='archived'").get(parts[2]) as any; if (!item) return send(response, 404, { error: "entry_not_found" }); return send(response, 200, { item, values: db.prepare("SELECT id,field_key,value_json,source,source_id,user_confirmed,sharing,sensitivity,recorded_at,updated_at FROM context_values WHERE entry_id=? ORDER BY field_key").all(parts[2]) }); }
-    if (request.method === "PATCH" && parts[0] === "v1" && parts[1] === "context-entries" && parts[2]) { const input = await body(request); const fieldKey = text(input.fieldKey); if (!fieldKey || isSecretLike(input.value)) return send(response, 400, { error: "context_value_invalid" }); const result = db.prepare("UPDATE context_values SET value_json=?,user_confirmed=1,updated_at=? WHERE entry_id=? AND field_key=?").run(JSON.stringify(input.value), now(), parts[2], fieldKey); return result.changes ? send(response, 200, { updated: true }) : send(response, 404, { error: "context_value_not_found" }); }
+    if (request.method === "PATCH" && parts[0] === "v1" && parts[1] === "context-entries" && parts[2]) { const input = await body(request); const fieldKey = text(input.fieldKey); if (!fieldKey || isSecretLike(input.value)) return send(response, 400, { error: "context_value_invalid" }); const candidate = db.prepare("SELECT c.source_content_hash,d.content_hash,d.archived_at FROM context_entry_candidates c JOIN context_documents d ON d.id=c.document_id WHERE c.entry_id=?").get(parts[2]) as any; if (candidate && (candidate.archived_at || candidate.source_content_hash !== candidate.content_hash)) return send(response, 409, { error: "extraction_stale" }); const result = db.prepare("UPDATE context_values SET value_json=?,user_confirmed=1,updated_at=? WHERE entry_id=? AND field_key=?").run(JSON.stringify(input.value), now(), parts[2], fieldKey); return result.changes ? send(response, 200, { updated: true }) : send(response, 404, { error: "context_value_not_found" }); }
     if (request.method === "DELETE" && parts[0] === "v1" && parts[1] === "context-entries" && parts[2]) { db.prepare("UPDATE context_entries SET status='archived',updated_at=? WHERE id=?").run(now(), parts[2]); audit("archive_entry", { entryId: parts[2] }); return send(response, 200, { archived: true }); }
     if (request.method === "GET" && url.pathname === "/v1/context-profiles") return send(response, 200, { items: db.prepare("SELECT * FROM context_profiles ORDER BY updated_at DESC").all() });
     if (request.method === "POST" && url.pathname === "/v1/context-profiles") { const input = await body(request); const selected = Array.isArray(input.includedFields) ? input.includedFields as Array<{ templateId: string; fieldKey: string }> : []; if (!text(input.name) || !selected.length) return send(response, 400, { error: "profile_invalid" }); const id = newId("profile"), createdAt = now(); db.exec("BEGIN IMMEDIATE"); try { db.prepare("INSERT INTO context_profiles(id,name,target,detail_level,maximum_characters,created_at,updated_at) VALUES(?,?,?,?,?,?,?)").run(id, text(input.name), text(input.target) || "generic", text(input.detailLevel) || "standard", typeof input.maximumCharacters === "number" ? input.maximumCharacters : null, createdAt, createdAt); const insert = db.prepare("INSERT INTO context_profile_fields(profile_id,template_id,field_key) VALUES(?,?,?)"); for (const item of selected) insert.run(id, item.templateId, item.fieldKey); db.exec("COMMIT"); } catch (error) { db.exec("ROLLBACK"); throw error; } return send(response, 201, { id }); }

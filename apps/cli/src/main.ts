@@ -13,8 +13,9 @@ async function main() {
   if (command === "entry" && sub === "list") return print(await request("/v1/context-entries"));
   if (command === "entry" && sub === "create" && args[0]) return print(await request("/v1/context-entries", { method: "POST", headers: { "content-type": "application/json" }, body: readFileSync(args[0], "utf8") }));
   if (command === "document" && sub === "list") return print(await request("/v1/documents"));
-  if (command === "document" && sub === "sync" && args[0]) return print(await request("/v1/documents", { method: "POST", headers: { "content-type": "application/json" }, body: readFileSync(args[0], "utf8") }));
+  if (command === "document" && sub === "sync" && args[0]) return print(await request("/v1/documents", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ filePath: args[0] }) }));
   if (command === "document" && sub === "search" && args[0]) return print(await request("/v1/documents/search", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query: args.join(" ") }) }));
+  if (command === "document" && sub === "excerpt" && args[0]) return print(await request(`/v1/documents/${encodeURIComponent(args[0])}/excerpt${args[1] ? `?maxCharacters=${encodeURIComponent(args[1])}` : ""}`));
   if (command === "profile" && sub === "list") return print(await request("/v1/context-profiles"));
   if (command === "profile" && sub === "create" && args[0]) return print(await request("/v1/context-profiles", { method: "POST", headers: { "content-type": "application/json" }, body: readFileSync(args[0], "utf8") }));
   if (command === "profile" && sub === "preview" && args[0]) return print(await request("/v1/context-exports/preview", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ profileId: args[0], format: args[1] ?? "markdown" }) }));

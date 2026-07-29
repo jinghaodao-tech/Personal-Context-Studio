@@ -4,6 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "node --experimental-strip-types apps/api/src/server.ts",
+    "dev:watcher": "node --experimental-strip-types apps/watcher/src/main.ts",
+    "mcp": "node --experimental-strip-types apps/mcp/src/main.ts",
     "cli": "node --experimental-strip-types apps/cli/src/main.ts",
     "test": "node --experimental-strip-types --test test/*.test.ts",
     "typecheck": "tsc --project tsconfig.json",
