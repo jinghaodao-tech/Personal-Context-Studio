@@ -5,6 +5,8 @@ import { dirname, resolve } from "node:path";
 import { eligibleForExport, formatExport, isSecretLike, newId, validateCandidate, validateField, type ContextTemplateField, type Sharing, type Sensitivity } from "../../../packages/domain/src/index.ts";
 import { PCS_ANALYSIS_SNAPSHOT_VERSION, validateExperimentTemplateRequest, type ExperimentTemplateRequestV1 } from "../../../packages/metheory-bridge/src/index.ts";
 import { excerpt, readMarkdownSnapshot } from "../../../packages/documents/src/index.ts";
+import { createLocalAiProvider } from "../../../packages/ai-core/src/index.ts";
+import { RuntimeManager, detectOllama, detectOpenAiCompatible } from "../../../packages/local-ai-runtime/src/index.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 const databasePath = process.env.PCS_DB ?? resolve(root, "data", "personal-context-studio.sqlite3");
@@ -14,6 +16,15 @@ mkdirSync(notesRoot, { recursive: true });
 const db = new DatabaseSync(databasePath);
 db.exec(readFileSync(resolve(root, "db", "schema.sql"), "utf8"));
 const now = () => new Date().toISOString();
+const localAiProvider = createLocalAiProvider({ provider: process.env.PCS_AI_PROVIDER, model: process.env.PCS_AI_MODEL, baseUrl: process.env.PCS_AI_BASE_URL });
+function runtimeArguments() {
+  try {
+    const value = process.env.PCS_AI_ARGUMENTS;
+    const parsed = value ? JSON.parse(value) : [];
+    return Array.isArray(parsed) && parsed.every((item) => typeof item === "string") ? parsed : [];
+  } catch { return []; }
+}
+const localAiRuntime = new RuntimeManager({ executablePath: process.env.PCS_AI_EXECUTABLE, arguments: runtimeArguments(), idleTimeoutMinutes: Number(process.env.PCS_AI_IDLE_MINUTES ?? 15) });
 const allowedSharing = new Set<Sharing>(["always", "purpose_only", "private", "never"]);
 const allowedSensitivity = new Set<Sensitivity>(["normal", "sensitive", "highly_sensitive"]);
 
@@ -38,6 +49,8 @@ function exportPreview(profileId: string, format: "markdown" | "json" | "agents"
 
 function validTimestamp(value: unknown): value is string { return typeof value === "string" && !Number.isNaN(Date.parse(value)); }
 function ftsTerms(value: string) { return value.trim().split(/\s+/).map((term) => term.replaceAll('"', "")).filter(Boolean).slice(0, 12).map((term) => `"${term}"`).join(" AND "); }
+function destinationHost(value: string) { try { return new URL(value.includes("://") ? value : `https://${value}`).hostname.toLowerCase(); } catch { return ""; } }
+function activeExternalAiConsent(scope: "document" | "field", providerId: string, host: string, documentId = "", templateId = "", fieldKey = "") { return Boolean(db.prepare("SELECT 1 FROM context_external_ai_consents WHERE scope=? AND provider_id=? AND destination_host=? AND document_id=? AND template_id=? AND field_key=? AND revoked_at IS NULL").get(scope, providerId, host, documentId, templateId, fieldKey)); }
 
 function upsertDocument(inputPath: string) {
   const snapshot = readMarkdownSnapshot(notesRoot, inputPath);
@@ -97,6 +110,30 @@ const server = createServer(async (request, response) => {
       return send(response, 200, { items });
     }
     if (request.method === "GET" && url.pathname === "/v1/reviews/pending") { const items = db.prepare("SELECT e.id AS entry_id,e.template_id,c.document_id,c.source_content_hash,d.content_hash,d.file_path,COUNT(v.id) AS pending_values FROM context_entries e JOIN context_entry_candidates c ON c.entry_id=e.id JOIN context_documents d ON d.id=c.document_id JOIN context_values v ON v.entry_id=e.id AND v.user_confirmed=0 WHERE e.status='active' GROUP BY e.id ORDER BY e.created_at DESC").all() as any[]; return send(response, 200, { items: items.map((item) => ({ ...item, stale: item.source_content_hash !== item.content_hash })) }); }
+    if (request.method === "GET" && url.pathname === "/v1/local-ai/status") { const [ollama, compatible, provider] = await Promise.all([detectOllama(), detectOpenAiCompatible(process.env.PCS_AI_BASE_URL), localAiProvider.healthCheck()]); return send(response, 200, { provider, runtimeState: localAiRuntime.state, ollama, openAiCompatible: compatible }); }
+    if (request.method === "POST" && url.pathname === "/v1/local-ai/start") { await localAiRuntime.startWithRetry(1); return send(response, 200, { started: true, runtimeState: localAiRuntime.state }); }
+    if (request.method === "POST" && url.pathname === "/v1/local-ai/stop") { await localAiRuntime.stop(); return send(response, 200, { stopped: true, runtimeState: localAiRuntime.state }); }
+    if (request.method === "GET" && url.pathname === "/v1/privacy/external-ai-consents") return send(response, 200, { items: db.prepare("SELECT id,scope,provider_id,destination_host,document_id,template_id,field_key,granted_at,revoked_at FROM context_external_ai_consents ORDER BY granted_at DESC").all() });
+    if (request.method === "POST" && url.pathname === "/v1/privacy/external-ai-consents") {
+      const input = await body(request); const scope = text(input.scope); const providerId = text(input.providerId); const host = destinationHost(text(input.destinationHost)); const documentId = text(input.documentId); const templateId = text(input.templateId); const fieldKey = text(input.fieldKey);
+      if (!providerId || !host || !["document", "field"].includes(scope) || (scope === "document" && !documentId) || (scope === "field" && (!templateId || !fieldKey))) return send(response, 400, { error: "external_ai_consent_invalid" });
+      const id = newId("consent"), timestamp = now();
+      db.prepare("INSERT INTO context_external_ai_consents(id,scope,provider_id,destination_host,document_id,template_id,field_key,granted_at,revoked_at) VALUES(?,?,?,?,?,?,?,?,NULL) ON CONFLICT(scope,provider_id,destination_host,document_id,template_id,field_key) DO UPDATE SET granted_at=excluded.granted_at,revoked_at=NULL").run(id, scope, providerId, host, documentId, templateId, fieldKey, timestamp);
+      audit("grant_external_ai_consent", { scope, providerId, destinationHost: host, documentId: documentId || undefined, templateId: templateId || undefined, fieldKey: fieldKey || undefined });
+      const consent = db.prepare("SELECT id FROM context_external_ai_consents WHERE scope=? AND provider_id=? AND destination_host=? AND document_id=? AND template_id=? AND field_key=?").get(scope, providerId, host, documentId, templateId, fieldKey) as any;
+      return send(response, 201, { id: consent.id, granted: true, scope, providerId, destinationHost: host });
+    }
+    if (request.method === "POST" && parts.join("/").match(/^v1\/privacy\/external-ai-consents\/[^/]+\/revoke$/)) { const result = db.prepare("UPDATE context_external_ai_consents SET revoked_at=? WHERE id=? AND revoked_at IS NULL").run(now(), parts[3]); return result.changes ? send(response, 200, { revoked: true }) : send(response, 404, { error: "external_ai_consent_not_found" }); }
+    if (request.method === "POST" && url.pathname === "/v1/privacy/external-ai/authorize-extraction") {
+      const input = await body(request); const documentId = text(input.documentId); const templateId = text(input.templateId); const providerId = text(input.providerId); const host = destinationHost(text(input.destinationHost));
+      const document = db.prepare("SELECT id FROM context_documents WHERE id=? AND archived_at IS NULL").get(documentId); const fields = db.prepare("SELECT field_key,sharing_default,sensitivity FROM context_template_fields WHERE template_id=? ORDER BY display_order").all(templateId) as any[];
+      if (!document || !templateId || !providerId || !host || !fields.length) return send(response, 400, { error: "external_ai_authorization_invalid" });
+      const blockedFields = fields.filter((field) => field.sharing_default === "never" || field.sensitivity === "highly_sensitive").map((field) => field.field_key);
+      const missing = [] as string[];
+      if (!activeExternalAiConsent("document", providerId, host, documentId)) missing.push("document");
+      for (const field of fields) if (!blockedFields.includes(field.field_key) && !activeExternalAiConsent("field", providerId, host, "", templateId, field.field_key)) missing.push(`field:${field.field_key}`);
+      return send(response, 200, { allowed: !blockedFields.length && !missing.length, providerId, destinationHost: host, missing, blockedFields });
+    }
     if (request.method === "GET" && url.pathname === "/v1/metheory/analysis-snapshot") return send(response, 200, analysisSnapshot(url.searchParams.get("from") ?? undefined, url.searchParams.get("to") ?? undefined));
     if (request.method === "GET" && url.pathname === "/v1/experiment-template-requests") return send(response, 200, { items: db.prepare("SELECT id,source_system,source_hypothesis_id,payload_json,status,template_id,created_at,updated_at FROM experiment_template_requests ORDER BY created_at DESC").all() });
     if (request.method === "POST" && url.pathname === "/v1/experiment-template-requests") {

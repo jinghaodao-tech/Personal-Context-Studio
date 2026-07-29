@@ -43,6 +43,15 @@ test("local documents feed reviewed analysis snapshots and experiment template r
     assert.match((await api(`/v1/documents/${document.body.id}/excerpt?maxCharacters=200`)).body.excerpt, /energy/);
     const template = await api("/v1/context-templates", "POST", { name: "Daily signal", purpose: "self_understanding", fields: [{ fieldKey: "energy", label: "Energy", valueType: "number", required: true, displayOrder: 1, sharingDefault: "purpose_only", sensitivity: "normal", reason: "Compare energy" }] });
     const templateId = template.body.item.id; await api(`/v1/context-templates/${templateId}/activate`, "POST");
+    const authorizationBefore = await api("/v1/privacy/external-ai/authorize-extraction", "POST", { documentId: document.body.id, templateId, providerId: "manual", destinationHost: "chatgpt.com" });
+    assert.equal(authorizationBefore.body.allowed, false);
+    assert.deepEqual(authorizationBefore.body.missing.sort(), ["document", "field:energy"]);
+    const documentConsent = await api("/v1/privacy/external-ai-consents", "POST", { scope: "document", providerId: "manual", destinationHost: "chatgpt.com", documentId: document.body.id });
+    const fieldConsent = await api("/v1/privacy/external-ai-consents", "POST", { scope: "field", providerId: "manual", destinationHost: "chatgpt.com", templateId, fieldKey: "energy" });
+    assert.equal((await api("/v1/privacy/external-ai/authorize-extraction", "POST", { documentId: document.body.id, templateId, providerId: "manual", destinationHost: "chatgpt.com" })).body.allowed, true);
+    assert.equal((await api(`/v1/privacy/external-ai-consents/${fieldConsent.body.id}/revoke`, "POST")).body.revoked, true);
+    assert.equal((await api("/v1/privacy/external-ai/authorize-extraction", "POST", { documentId: document.body.id, templateId, providerId: "manual", destinationHost: "chatgpt.com" })).body.allowed, false);
+    assert.equal(documentConsent.body.granted, true);
     const candidate = await api("/v1/context-entries/candidates", "POST", { templateId, sourceDocumentId: document.body.id, provider: "ollama", values: { energy: 4 } });
     assert.equal(candidate.response.status, 201); const detail = await api(`/v1/context-entries/${candidate.body.id}`); assert.equal(detail.body.values[0].user_confirmed, 0);
     assert.equal((await api(`/v1/context-entries/${candidate.body.id}`, "PATCH", { fieldKey: "energy", value: 4 })).response.status, 200);

@@ -59,6 +59,24 @@ update, delete, or arbitrary SQL tools. Configure Codex or Claude Code to run
 `node --experimental-strip-types <PCS path>\apps\mcp\src\main.ts`, with
 `PCS_API_URL` in the MCP process environment.
 
+## Local AI and external-AI consent
+
+Local template generation and document extraction now belong to PCS. Configure
+`PCS_AI_PROVIDER` as `disabled` (default), `mock`, `manual`, `ollama`, or
+`openai-compatible-local`. The latter two reject non-loopback endpoints.
+
+`context-studio ai status`, `ai start`, and `ai stop` manage the PCS-owned
+local runtime. Use `context-studio template generate <theme>` and
+`context-studio document extract <document-id> <template-id>` for the moved
+recording workflow.
+
+Before a manual external-AI extraction, PCS requires a stored consent for the
+source document and for every selected template field, scoped to the provider
+and destination host. `highly_sensitive` and `never` fields are blocked from
+external extraction even with consent. Grant and revoke these records through
+`privacy grant-external-ai` and `privacy revoke-external-ai`; consent records
+remain local and are included in the local privacy audit.
+
 ## MeTheory boundary
 
 Personal Context Studio never lets an AI read its entire database by default.

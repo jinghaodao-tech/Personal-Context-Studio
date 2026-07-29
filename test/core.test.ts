@@ -6,6 +6,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eligibleForExport, formatExport, isSecretLike, validateCandidate, validateField } from "../packages/domain/src/index.ts";
 import { listMarkdownFiles, readMarkdownSnapshot, resolveMarkdownPath } from "../packages/documents/src/index.ts";
+import { LocalAiProviderError, createLocalAiProvider } from "../packages/ai-core/src/index.ts";
+import { extractDocumentValues, extractionIsStale } from "../packages/entry-extraction/src/index.ts";
+import { RuntimeManager } from "../packages/local-ai-runtime/src/index.ts";
 import { validateAnalysisSnapshot, validateExperimentTemplateRequest } from "../packages/metheory-bridge/src/index.ts";
 
 test("context fields and MeTheory candidates have explicit contracts", () => {
@@ -56,6 +59,16 @@ test("MCP surface exposes read-only tools", async () => {
   } finally {
     child.close();
   }
+});
+
+test("PCS-owned AI providers and extraction stay local or explicit", async () => {
+  const manual = createLocalAiProvider({ provider: "manual" });
+  assert.match(manual.manualExtractionPrompt!({ content: "private note", sourceContentHash: "hash", template: { id: "template_1", fields: [] } }), /private note/);
+  await assert.rejects(() => manual.extractDocumentValues({ content: "x", sourceContentHash: "hash", template: { id: "template_1", fields: [] } }), LocalAiProviderError);
+  assert.throws(() => createLocalAiProvider({ provider: "openai-compatible-local", baseUrl: "https://example.com/v1" }), /remote_local_ai_endpoint/);
+  const extracted = await extractDocumentValues({ documentId: "doc_1", template: { id: "template_1", fields: [] }, content: "record", sourceUpdatedAt: "2026-07-01T00:00:00.000Z", provider: createLocalAiProvider({ provider: "mock" }) });
+  assert.equal(extractionIsStale(extracted, "changed record"), true);
+  await assert.rejects(() => new RuntimeManager().start(), /runtime_executable_unavailable/);
 });
 
 function spawnMcp() {
