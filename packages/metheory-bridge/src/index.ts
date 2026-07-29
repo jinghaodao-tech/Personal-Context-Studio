@@ -8,6 +8,12 @@ export type PcsAnalysisValue = {
   value: unknown;
   templateId: string;
   sourceDocumentId: string | null;
+  analysisRole?: string;
+  analysisRoleConfirmed?: boolean;
+  analysisMergeAllowed?: boolean;
+  minimum?: number;
+  maximum?: number;
+  unit?: string;
   allowedValues?: Array<{ key: string; label: string }>;
 };
 

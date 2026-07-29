@@ -15,6 +15,13 @@ mkdirSync(dirname(databasePath), { recursive: true });
 mkdirSync(notesRoot, { recursive: true });
 const db = new DatabaseSync(databasePath);
 db.exec(readFileSync(resolve(root, "db", "schema.sql"), "utf8"));
+function ensureColumn(table: string, column: string, definition: string) { const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>; if (!columns.some((item) => item.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`); }
+ensureColumn("context_template_fields", "minimum_value", "REAL");
+ensureColumn("context_template_fields", "maximum_value", "REAL");
+ensureColumn("context_template_fields", "unit", "TEXT");
+ensureColumn("context_template_fields", "analysis_role", "TEXT");
+ensureColumn("context_template_fields", "analysis_role_confirmed", "INTEGER NOT NULL DEFAULT 0");
+ensureColumn("context_template_fields", "analysis_merge_allowed", "INTEGER NOT NULL DEFAULT 0");
 const now = () => new Date().toISOString();
 const localAiProvider = createLocalAiProvider({ provider: process.env.PCS_AI_PROVIDER, model: process.env.PCS_AI_MODEL, baseUrl: process.env.PCS_AI_BASE_URL });
 function runtimeArguments() {
@@ -72,7 +79,7 @@ function upsertDocument(inputPath: string) {
 function analysisSnapshot(startAt?: string, endAt?: string) {
   const lower = validTimestamp(startAt) ? startAt : "0000-01-01T00:00:00.000Z";
   const upper = validTimestamp(endAt) ? endAt : "9999-12-31T23:59:59.999Z";
-  const rows = db.prepare("SELECT e.id AS entry_id,e.template_id,e.created_at,v.field_key,v.value_json,v.source_id,v.recorded_at,f.label,f.value_type,f.options_json FROM context_entries e JOIN context_values v ON v.entry_id=e.id JOIN context_template_fields f ON f.template_id=e.template_id AND f.field_key=v.field_key WHERE e.status='active' AND v.user_confirmed=1 AND v.sharing IN ('always','purpose_only') AND v.sensitivity!='highly_sensitive' AND v.recorded_at>=? AND v.recorded_at<=? ORDER BY v.recorded_at,e.id").all(lower, upper) as any[];
+  const rows = db.prepare("SELECT e.id AS entry_id,e.template_id,e.created_at,v.field_key,v.value_json,v.source_id,v.recorded_at,f.label,f.value_type,f.options_json,f.minimum_value,f.maximum_value,f.unit,f.analysis_role,f.analysis_role_confirmed,f.analysis_merge_allowed FROM context_entries e JOIN context_values v ON v.entry_id=e.id JOIN context_template_fields f ON f.template_id=e.template_id AND f.field_key=v.field_key WHERE e.status='active' AND v.user_confirmed=1 AND v.sharing IN ('always','purpose_only') AND v.sensitivity!='highly_sensitive' AND v.recorded_at>=? AND v.recorded_at<=? ORDER BY v.recorded_at,e.id").all(lower, upper) as any[];
   const records = new Map<string, { id: string; recordedAt: string; title: string; sourceDocumentId: string | null; values: any[] }>();
   let invalid = 0;
   for (const row of rows) {
@@ -82,7 +89,7 @@ function analysisSnapshot(startAt?: string, endAt?: string) {
     const record: { id: string; recordedAt: string; title: string; sourceDocumentId: string | null; values: any[] } = records.get(row.entry_id) ?? { id: row.entry_id, recordedAt: row.recorded_at, title: String(row.template_id), sourceDocumentId: typeof row.source_id === "string" && row.source_id.startsWith("doc_") ? row.source_id : null, values: [] };
     let allowedValues: Array<{ key: string; label: string }> | undefined;
     try { const options = JSON.parse(row.options_json); if (Array.isArray(options)) allowedValues = options.filter((item): item is { key: string; label: string } => Boolean(item) && typeof item.key === "string" && typeof item.label === "string"); } catch { /* an invalid option list is not exported */ }
-    record.values.push({ fieldKey: row.field_key, label: row.label, valueType: row.value_type, value, templateId: row.template_id, sourceDocumentId: record.sourceDocumentId, allowedValues });
+    record.values.push({ fieldKey: row.field_key, label: row.label, valueType: row.value_type, value, templateId: row.template_id, sourceDocumentId: record.sourceDocumentId, allowedValues, analysisRole: row.analysis_role ?? undefined, analysisRoleConfirmed: Boolean(row.analysis_role_confirmed), analysisMergeAllowed: Boolean(row.analysis_merge_allowed), minimum: row.minimum_value ?? undefined, maximum: row.maximum_value ?? undefined, unit: row.unit ?? undefined });
     records.set(row.entry_id, record);
   }
   const unconfirmed = Number((db.prepare("SELECT COUNT(*) AS count FROM context_values v JOIN context_entries e ON e.id=v.entry_id WHERE e.status='active' AND v.user_confirmed=0 AND v.recorded_at>=? AND v.recorded_at<=?").get(lower, upper) as any).count);
@@ -164,7 +171,7 @@ const server = createServer(async (request, response) => {
       const input = await body(request); const name = text(input.name); const purpose = text(input.purpose) || "custom"; const rawFields = Array.isArray(input.fields) ? input.fields as ContextTemplateField[] : [];
       if (!name || !rawFields.length) return send(response, 400, { error: "template_invalid" });
       const validated = rawFields.map(validateField); const orders = new Set(validated.map((field) => field.displayOrder)); if (orders.size !== validated.length) return send(response, 400, { error: "template_field_order_invalid" });
-      const id = newId("template"), createdAt = now(); db.exec("BEGIN IMMEDIATE"); try { db.prepare("INSERT INTO context_templates(id,name,description,purpose,status,version,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)").run(id, name, text(input.description), purpose, "draft", 1, createdAt, createdAt); const insert = db.prepare("INSERT INTO context_template_fields(id,template_id,field_key,label,description,value_type,required,display_order,options_json,sharing_default,sensitivity,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)"); for (const field of validated) insert.run(newId("field"), id, field.fieldKey, field.label, field.description ?? "", field.valueType, field.required ? 1 : 0, field.displayOrder, JSON.stringify(field.options ?? []), field.sharingDefault, field.sensitivity, field.reason); db.exec("COMMIT"); } catch (error) { db.exec("ROLLBACK"); throw error; }
+      const id = newId("template"), createdAt = now(); db.exec("BEGIN IMMEDIATE"); try { db.prepare("INSERT INTO context_templates(id,name,description,purpose,status,version,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)").run(id, name, text(input.description), purpose, "draft", 1, createdAt, createdAt); const insert = db.prepare("INSERT INTO context_template_fields(id,template_id,field_key,label,description,value_type,required,display_order,options_json,minimum_value,maximum_value,unit,analysis_role,analysis_role_confirmed,analysis_merge_allowed,sharing_default,sensitivity,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"); for (const field of validated) insert.run(newId("field"), id, field.fieldKey, field.label, field.description ?? "", field.valueType, field.required ? 1 : 0, field.displayOrder, JSON.stringify(field.options ?? []), field.minimum ?? null, field.maximum ?? null, field.unit ?? null, field.analysisRole ?? null, field.analysisRoleConfirmed ? 1 : 0, field.analysisMergeAllowed ? 1 : 0, field.sharingDefault, field.sensitivity, field.reason); db.exec("COMMIT"); } catch (error) { db.exec("ROLLBACK"); throw error; }
       return send(response, 201, { item: templateDetail(id) });
     }
     if (request.method === "GET" && parts[0] === "v1" && parts[1] === "context-templates" && parts[2]) { const item = templateDetail(parts[2]); return item ? send(response, 200, { item }) : send(response, 404, { error: "template_not_found" }); }
