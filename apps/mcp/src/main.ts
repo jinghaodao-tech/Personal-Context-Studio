@@ -72,7 +72,7 @@ async function callTool(name: string, args: Record<string, any>) {
     const query = new URLSearchParams();
     if (typeof args.from === "string") query.set("from", args.from);
     if (typeof args.to === "string") query.set("to", args.to);
-    return api(`/v1/metheory/analysis-snapshot${query.size ? `?${query}` : ""}`);
+    return api(`/v1/context/analysis-snapshot${query.size ? `?${query}` : ""}`);
   }
   if (name === "list_pending_reviews") return api("/v1/reviews/pending");
   throw new Error("tool_not_found");

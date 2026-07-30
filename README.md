@@ -5,8 +5,8 @@ user-confirmed context that may be shared with AI tools. Markdown files are the
 canonical human record and can be edited with VS Code, Cursor, Obsidian, or any
 other editor. PCS watches that folder, stores document metadata and a
 regenerable search index, and owns local-AI extraction candidates, review,
-templates, sharing preferences, profiles, and exports. MeTheory consumes only
-the user-confirmed analysis snapshot and evaluates observations and hypotheses.
+templates, sharing preferences, profiles, and exports. Connected tools consume
+only user-confirmed snapshots through PCS's generic local Integration API.
 
 ## Run
 
@@ -106,40 +106,41 @@ external extraction even with consent. Grant and revoke these records through
 `privacy grant-external-ai` and `privacy revoke-external-ai`; consent records
 remain local and are included in the local privacy audit.
 
-## MeTheory boundary
+## Integration boundary
 
-Personal Context Studio never lets an AI read its entire database by default.
+Personal Context Studio never lets an external tool read its entire database by default.
 Use `POST /v1/documents/search` to retrieve a bounded local result set, and use
-`GET /v1/metheory/analysis-snapshot` to provide only confirmed, shareable,
-non-highly-sensitive structured values to MeTheory.
+`GET /v1/context/analysis-snapshot` to provide only confirmed, shareable,
+non-highly-sensitive structured values to an explicitly connected local tool.
 
-MeTheory creates a complex experiment request with
-`POST /v1/experiments/personal-context-template-requests`. Personal Context
-Studio receives it at `POST /v1/experiment-template-requests`, then turns it
-into a draft template only after an explicit user decision. Short experiment
-check-ins remain a MeTheory responsibility.
+Any local tool can submit a `pcs-integration-template-request-v1` payload to
+`POST /v1/integration-template-requests`. PCS keeps it pending, then creates a
+draft template only after an explicit user decision. The requesting tool never
+receives authority to activate templates or confirm values.
 
 `POST /v1/context-entries/candidates` records a local-AI extraction candidate
 against a local document. Its values begin unconfirmed and become eligible for
 analysis only after a per-value `PATCH /v1/context-entries/:id` review, which
 creates the first confirmed revision.
 
-## MeTheory imports
+## Integration imports
 
-MeTheory self-understanding candidates can still be imported with:
-
-```powershell
-metheory personal-context export-migration --json
-```
-
-Import individual `personal-context-candidate-v1` objects with:
+External tools submit a generic envelope containing an integration ID,
+`sourceSystem`, optional `sourceReferenceId`, and an opaque payload:
 
 ```powershell
-context-studio import metheory candidate.json --json
+context-studio integration import candidate.json --json
+context-studio integration imports --json
+context-studio integration decide-import <id> held --json
 ```
 
-Imports remain `pending` until the user chooses an explicit decision. They do
-not silently become active AI context.
+Imports remain `pending` until the user chooses an explicit decision. Payloads
+are not interpreted by PCS Core and never silently become active AI context.
+
+MeTheory is one possible adapter: it requests an analysis snapshot and may
+submit a template request or a hypothesis payload using the same generic
+contract. PCS Core has no MeTheory-specific routes, schema types, or write
+authority.
 
 ## Safety
 

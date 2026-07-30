@@ -18,11 +18,11 @@ test("local API keeps imports pending and omits non-shareable context", async ()
     const entry = await fetch(url("/v1/context-entries"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ templateId, values: { editor: "VS Code", health_note: "private" } }) }); assert.equal(entry.status, 201);
     const profile = await fetch(url("/v1/context-profiles"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Codex", target: "codex", includedFields: [{ templateId, fieldKey: "editor" }, { templateId, fieldKey: "health_note" }] }) }); const profileId = (await profile.json() as any).id;
     const preview = await fetch(url("/v1/context-exports/preview"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ profileId, format: "markdown" }) }); const previewBody = await preview.json() as any; assert.match(previewBody.content, /VS Code/); assert.doesNotMatch(previewBody.content, /private/);
-    const imported = await fetch(url("/v1/context-imports/metheory"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ schemaVersion: "personal-context-candidate-v1", id: "context_candidate_1", sourceSystem: "metheory", sourceHypothesisId: "hypothesis_1", statement: "Clear plans help me begin work.", construct: "task_initiation", tendencyScope: "state_dependent", reviewStatus: "fits", evidenceSummary: { supportingCount: 3, contradictingCount: 1, periodStartAt: "2026-01-01", periodEndAt: "2026-01-08" }, caution: [], createdAt: "2026-01-08" }) }); assert.equal((await imported.json() as any).decision, "pending");
+    const imported = await fetch(url("/v1/integration-imports"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: "context_candidate_1", sourceSystem: "workbench", sourceReferenceId: "candidate_1", payload: { statement: "Clear plans help me begin work." }, createdAt: "2026-01-08T00:00:00.000Z" }) }); assert.equal((await imported.json() as any).decision, "pending");
   } finally { child.kill(); await new Promise((resolve) => setTimeout(resolve, 100)); rmSync(directory, { recursive: true, force: true }); }
 });
 
-test("local documents feed reviewed analysis snapshots and experiment template requests", async () => {
+test("local documents feed reviewed analysis snapshots and generic integration template requests", async () => {
   const directory = mkdtempSync(join(tmpdir(), "pcs-bridge-"));
   const notesDirectory = join(directory, "notes");
   mkdirSync(join(notesDirectory, "daily"), { recursive: true });
@@ -55,14 +55,14 @@ test("local documents feed reviewed analysis snapshots and experiment template r
     const candidate = await api("/v1/context-entries/candidates", "POST", { templateId, sourceDocumentId: document.body.id, provider: "ollama", values: { energy: 4 } });
     assert.equal(candidate.response.status, 201); const detail = await api(`/v1/context-entries/${candidate.body.id}`); assert.equal(detail.body.values[0].user_confirmed, 0);
     assert.equal((await api(`/v1/context-entries/${candidate.body.id}`, "PATCH", { fieldKey: "energy", value: 4 })).response.status, 200);
-    const snapshot = await api("/v1/metheory/analysis-snapshot"); assert.equal(snapshot.body.schemaVersion, "pcs-analysis-snapshot-v1"); assert.equal(snapshot.body.records[0].values[0].value, 4);
+    const snapshot = await api("/v1/context/analysis-snapshot"); assert.equal(snapshot.body.schemaVersion, "pcs-context-analysis-snapshot-v1"); assert.equal(snapshot.body.records[0].values[0].value, 4);
     const staleCandidate = await api("/v1/context-entries/candidates", "POST", { templateId, sourceDocumentId: document.body.id, provider: "ollama", values: { energy: 2 } });
     writeFileSync(notePath, "---\nrecorded_at: 2026-07-01T09:00:00.000Z\ntitle: Work day\n---\nThe note changed after extraction.", "utf8");
     await api("/v1/documents", "POST", { filePath: "daily/2026-07-01.md" });
     assert.equal((await api(`/v1/context-entries/${staleCandidate.body.id}`, "PATCH", { fieldKey: "energy", value: 2 })).response.status, 409);
     assert.equal((await api("/v1/reviews/pending")).body.items.some((item: any) => item.entry_id === staleCandidate.body.id && item.stale), true);
-    const request = await api("/v1/experiment-template-requests", "POST", { schemaVersion: "pcs-experiment-template-request-v1", id: "request_focus_1", sourceSystem: "metheory", hypothesisId: "hypothesis_1", title: "Focus journal", purpose: "Check focus conditions", durationDays: 14, requestedFields: [{ fieldKey: "focus", label: "Focus", valueType: "number", required: true, reason: "Compare conditions" }], createdAt: "2026-07-01T00:00:00.000Z" });
-    assert.equal(request.response.status, 201); const createdTemplate = await api("/v1/experiment-template-requests/request_focus_1/create-template", "POST"); assert.equal(createdTemplate.response.status, 201); assert.equal(createdTemplate.body.template.status, "draft");
+    const request = await api("/v1/integration-template-requests", "POST", { schemaVersion: "pcs-integration-template-request-v1", id: "request_focus_1", sourceSystem: "workbench", sourceReferenceId: "focus_1", title: "Focus journal", purpose: "Check focus conditions", durationDays: 14, requestedFields: [{ fieldKey: "focus", label: "Focus", valueType: "number", required: true, reason: "Compare conditions" }], createdAt: "2026-07-01T00:00:00.000Z" });
+    assert.equal(request.response.status, 201); const createdTemplate = await api(`/v1/integration-template-requests/${request.body.id}/create-template`, "POST"); assert.equal(createdTemplate.response.status, 201); assert.equal(createdTemplate.body.template.status, "draft");
   } finally { child.kill(); await new Promise((resolve) => setTimeout(resolve, 100)); rmSync(directory, { recursive: true, force: true }); }
 });
 
@@ -130,7 +130,7 @@ test("confirmed values retain append-only revisions and safe deletion is planned
     assert.equal((await api("/v1/dashboard/overview")).body.confirmedValues, 1);
     const retracted = await api(`/v1/context-entries/${entry.body.id}`, "PATCH", { fieldKey: "energy", value: 4, changeType: "retraction", reason: "No longer applicable" });
     assert.equal(retracted.body.lifecycleState, "retracted");
-    assert.equal((await api("/v1/metheory/analysis-snapshot")).body.records.length, 0);
+    assert.equal((await api("/v1/context/analysis-snapshot")).body.records.length, 0);
     const plan = await api("/v1/privacy/safe-delete/plan", "POST", { entryId: entry.body.id });
     assert.equal(plan.body.summary.revisions, 3);
     assert.equal((await api("/v1/privacy/safe-delete/execute", "POST", { entryId: entry.body.id, planId: plan.body.planId, confirmation: "wrong" })).response.status, 400);

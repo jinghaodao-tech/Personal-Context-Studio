@@ -2,8 +2,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { eligibleForExport, formatExport, isSecretLike, newId, validateCandidate, validateField, type ContextTemplateField, type Sharing, type Sensitivity } from "../../../packages/domain/src/index.ts";
-import { PCS_ANALYSIS_SNAPSHOT_VERSION, validateExperimentTemplateRequest, type ExperimentTemplateRequestV1 } from "../../../packages/metheory-bridge/src/index.ts";
+import { eligibleForExport, formatExport, isSecretLike, newId, validateField, type ContextTemplateField, type Sharing, type Sensitivity } from "../../../packages/domain/src/index.ts";
+import { CONTEXT_ANALYSIS_SNAPSHOT_VERSION, validateIntegrationImport, validateIntegrationTemplateRequest, type IntegrationTemplateRequestV1 } from "../../../packages/integration-contracts/src/index.ts";
 import { excerpt, readMarkdownSnapshot } from "../../../packages/documents/src/index.ts";
 import { createLocalAiProvider } from "../../../packages/ai-core/src/index.ts";
 import { RuntimeManager, detectOllama, detectOpenAiCompatible } from "../../../packages/local-ai-runtime/src/index.ts";
@@ -25,6 +25,8 @@ ensureColumn("context_template_fields", "analysis_role_confirmed", "INTEGER NOT 
 ensureColumn("context_template_fields", "analysis_merge_allowed", "INTEGER NOT NULL DEFAULT 0");
 ensureColumn("context_values", "current_revision_id", "TEXT");
 ensureColumn("context_values", "lifecycle_state", "TEXT NOT NULL DEFAULT 'active'");
+ensureColumn("integration_template_requests", "source_request_id", "TEXT NOT NULL DEFAULT ''");
+ensureColumn("integration_import_records", "source_import_id", "TEXT NOT NULL DEFAULT ''");
 const now = () => new Date().toISOString();
 const localAiProvider = createLocalAiProvider({ provider: process.env.PCS_AI_PROVIDER, model: process.env.PCS_AI_MODEL, baseUrl: process.env.PCS_AI_BASE_URL });
 function runtimeArguments() {
@@ -142,7 +144,7 @@ function analysisSnapshot(startAt?: string, endAt?: string) {
   }
   const unconfirmed = Number((db.prepare("SELECT COUNT(*) AS count FROM context_values v JOIN context_entries e ON e.id=v.entry_id WHERE e.status='active' AND v.user_confirmed=0 AND v.recorded_at>=? AND v.recorded_at<=?").get(lower, upper) as any).count);
   const nonShareable = Number((db.prepare("SELECT COUNT(*) AS count FROM context_values v JOIN context_entries e ON e.id=v.entry_id WHERE e.status='active' AND (v.sharing IN ('private','never') OR v.sensitivity='highly_sensitive') AND v.recorded_at>=? AND v.recorded_at<=?").get(lower, upper) as any).count);
-  return { schemaVersion: PCS_ANALYSIS_SNAPSHOT_VERSION, generatedAt: now(), records: [...records.values()], excluded: { unconfirmed, nonShareable, invalid } };
+  return { schemaVersion: CONTEXT_ANALYSIS_SNAPSHOT_VERSION, generatedAt: now(), records: [...records.values()], excluded: { unconfirmed, nonShareable, invalid } };
 }
 
 function dashboardValues() { return db.prepare("SELECT v.id AS value_id,v.entry_id,v.field_key,v.value_json,v.user_confirmed,v.sharing,v.sensitivity,v.lifecycle_state,v.current_revision_id,v.recorded_at,v.updated_at,e.template_id,t.name AS template_name,f.label FROM context_values v JOIN context_entries e ON e.id=v.entry_id JOIN context_templates t ON t.id=e.template_id JOIN context_template_fields f ON f.template_id=e.template_id AND f.field_key=v.field_key WHERE e.status='active' ORDER BY v.updated_at DESC").all(); }
@@ -195,29 +197,29 @@ const server = createServer(async (request, response) => {
       for (const field of fields) if (!blockedFields.includes(field.field_key) && !activeExternalAiConsent("field", providerId, host, "", templateId, field.field_key)) missing.push(`field:${field.field_key}`);
       return send(response, 200, { allowed: !blockedFields.length && !missing.length, providerId, destinationHost: host, missing, blockedFields });
     }
-    if (request.method === "GET" && url.pathname === "/v1/metheory/analysis-snapshot") return send(response, 200, analysisSnapshot(url.searchParams.get("from") ?? undefined, url.searchParams.get("to") ?? undefined));
-    if (request.method === "GET" && url.pathname === "/v1/experiment-template-requests") return send(response, 200, { items: db.prepare("SELECT id,source_system,source_hypothesis_id,payload_json,status,template_id,created_at,updated_at FROM experiment_template_requests ORDER BY created_at DESC").all() });
-    if (request.method === "POST" && url.pathname === "/v1/experiment-template-requests") {
-      const input = validateExperimentTemplateRequest(await body(request)); const existing = db.prepare("SELECT id,status,template_id FROM experiment_template_requests WHERE id=?").get(input.id) as any;
+    if (request.method === "GET" && url.pathname === "/v1/context/analysis-snapshot") return send(response, 200, analysisSnapshot(url.searchParams.get("from") ?? undefined, url.searchParams.get("to") ?? undefined));
+    if (request.method === "GET" && url.pathname === "/v1/integration-template-requests") return send(response, 200, { items: db.prepare("SELECT id,source_system,source_request_id,source_reference_id,payload_json,status,template_id,created_at,updated_at FROM integration_template_requests ORDER BY created_at DESC").all() });
+    if (request.method === "POST" && url.pathname === "/v1/integration-template-requests") {
+      const input = validateIntegrationTemplateRequest(await body(request)); const existing = db.prepare("SELECT id,status,template_id FROM integration_template_requests WHERE source_system=? AND source_request_id=?").get(input.sourceSystem, input.id) as any;
       if (existing) return send(response, 200, { id: existing.id, status: existing.status, templateId: existing.template_id, duplicate: true });
-      db.prepare("INSERT INTO experiment_template_requests(id,source_system,source_hypothesis_id,payload_json,status,template_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)").run(input.id, input.sourceSystem, input.hypothesisId, JSON.stringify(input), "pending", null, input.createdAt, now());
-      audit("request_experiment_template", { requestId: input.id, hypothesisId: input.hypothesisId });
-      return send(response, 201, { id: input.id, status: "pending" });
+      const id = newId("integration_request"); db.prepare("INSERT INTO integration_template_requests(id,source_system,source_request_id,source_reference_id,payload_json,status,template_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)").run(id, input.sourceSystem, input.id, input.sourceReferenceId, JSON.stringify(input), "pending", null, input.createdAt, now());
+      audit("request_integration_template", { requestId: id, sourceSystem: input.sourceSystem, sourceReferenceId: input.sourceReferenceId });
+      return send(response, 201, { id, sourceRequestId: input.id, status: "pending" });
     }
-    if (request.method === "POST" && parts.join("/").match(/^v1\/experiment-template-requests\/[^/]+\/create-template$/)) {
-      const requestRecord = db.prepare("SELECT * FROM experiment_template_requests WHERE id=? AND status='pending'").get(parts[2]) as any;
-      if (!requestRecord) return send(response, 404, { error: "experiment_template_request_not_found" });
-      const requestInput = validateExperimentTemplateRequest(JSON.parse(requestRecord.payload_json)) as ExperimentTemplateRequestV1;
-      const requestedFields = requestInput.requestedFields.map((field, index) => validateField({ fieldKey: field.fieldKey, label: field.label, description: "Requested by MeTheory for an experiment.", valueType: field.valueType, required: field.required, displayOrder: index + 1, options: field.options, sharingDefault: "purpose_only", sensitivity: "normal", reason: field.reason }));
-      if (!requestedFields.length) return send(response, 400, { error: "experiment_template_fields_required" });
+    if (request.method === "POST" && parts.join("/").match(/^v1\/integration-template-requests\/[^/]+\/create-template$/)) {
+      const requestRecord = db.prepare("SELECT * FROM integration_template_requests WHERE id=? AND status='pending'").get(parts[2]) as any;
+      if (!requestRecord) return send(response, 404, { error: "integration_template_request_not_found" });
+      const requestInput = validateIntegrationTemplateRequest(JSON.parse(requestRecord.payload_json)) as IntegrationTemplateRequestV1;
+      const requestedFields = requestInput.requestedFields.map((field, index) => validateField({ fieldKey: field.fieldKey, label: field.label, description: `Requested by ${requestInput.sourceSystem}.`, valueType: field.valueType, required: field.required, displayOrder: index + 1, options: field.options, sharingDefault: "purpose_only", sensitivity: "normal", reason: field.reason }));
+      if (!requestedFields.length) return send(response, 400, { error: "integration_template_fields_required" });
       const templateId = newId("template"), timestamp = now(); db.exec("BEGIN IMMEDIATE");
       try {
-        db.prepare("INSERT INTO context_templates(id,name,description,purpose,status,version,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)").run(templateId, requestInput.title, requestInput.purpose, "metheory_experiment", "draft", 1, timestamp, timestamp);
+        db.prepare("INSERT INTO context_templates(id,name,description,purpose,status,version,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)").run(templateId, requestInput.title, requestInput.purpose, `integration_${requestInput.sourceSystem}`, "draft", 1, timestamp, timestamp);
         const insert = db.prepare("INSERT INTO context_template_fields(id,template_id,field_key,label,description,value_type,required,display_order,options_json,sharing_default,sensitivity,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
         for (const field of requestedFields) insert.run(newId("field"), templateId, field.fieldKey, field.label, field.description ?? "", field.valueType, field.required ? 1 : 0, field.displayOrder, JSON.stringify(field.options ?? []), field.sharingDefault, field.sensitivity, field.reason);
-        db.prepare("UPDATE experiment_template_requests SET status='template_created',template_id=?,updated_at=? WHERE id=?").run(templateId, timestamp, parts[2]); db.exec("COMMIT");
+        db.prepare("UPDATE integration_template_requests SET status='template_created',template_id=?,updated_at=? WHERE id=?").run(templateId, timestamp, parts[2]); db.exec("COMMIT");
       } catch (error) { db.exec("ROLLBACK"); throw error; }
-      audit("create_experiment_template", { requestId: parts[2], templateId });
+      audit("create_integration_template", { requestId: parts[2], templateId, sourceSystem: requestInput.sourceSystem });
       return send(response, 201, { requestId: parts[2], template: templateDetail(templateId) });
     }
     if (request.method === "GET" && url.pathname === "/v1/context-templates") return send(response, 200, { items: db.prepare("SELECT * FROM context_templates WHERE status!='archived' ORDER BY updated_at DESC").all() });
@@ -285,9 +287,14 @@ const server = createServer(async (request, response) => {
     if (request.method === "DELETE" && parts[0] === "v1" && parts[1] === "context-entries" && parts[2]) { db.prepare("UPDATE context_entries SET status='archived',updated_at=? WHERE id=?").run(now(), parts[2]); audit("archive_entry", { entryId: parts[2] }); return send(response, 200, { archived: true }); }
     if (request.method === "GET" && url.pathname === "/v1/context-profiles") return send(response, 200, { items: db.prepare("SELECT * FROM context_profiles ORDER BY updated_at DESC").all() });
     if (request.method === "POST" && url.pathname === "/v1/context-profiles") { const input = await body(request); const selected = Array.isArray(input.includedFields) ? input.includedFields as Array<{ templateId: string; fieldKey: string }> : []; if (!text(input.name) || !selected.length) return send(response, 400, { error: "profile_invalid" }); const id = newId("profile"), createdAt = now(); db.exec("BEGIN IMMEDIATE"); try { db.prepare("INSERT INTO context_profiles(id,name,target,detail_level,maximum_characters,created_at,updated_at) VALUES(?,?,?,?,?,?,?)").run(id, text(input.name), text(input.target) || "generic", text(input.detailLevel) || "standard", typeof input.maximumCharacters === "number" ? input.maximumCharacters : null, createdAt, createdAt); const insert = db.prepare("INSERT INTO context_profile_fields(profile_id,template_id,field_key) VALUES(?,?,?)"); for (const item of selected) insert.run(id, item.templateId, item.fieldKey); db.exec("COMMIT"); } catch (error) { db.exec("ROLLBACK"); throw error; } return send(response, 201, { id }); }
-    if (request.method === "POST" && url.pathname === "/v1/context-imports/metheory") { const input = await body(request); const candidate = validateCandidate(input); const existing = db.prepare("SELECT id FROM context_import_records WHERE source_system='metheory' AND source_candidate_id=?").get(candidate.id) as any; if (existing) return send(response, 200, { id: existing.id, duplicate: true }); const id = newId("import"), createdAt = now(); db.prepare("INSERT INTO context_import_records(id,source_system,source_candidate_id,source_hypothesis_id,payload_json,decision,imported_at) VALUES(?,?,?,?,?,?,?)").run(id, "metheory", candidate.id, candidate.sourceHypothesisId, JSON.stringify(candidate), "pending", createdAt); audit("import_mettheory_candidate", { importId: id, sourceCandidateId: candidate.id }); return send(response, 201, { id, decision: "pending" }); }
-    if (request.method === "GET" && url.pathname === "/v1/context-imports") return send(response, 200, { items: db.prepare("SELECT * FROM context_import_records ORDER BY imported_at DESC").all() });
-    if (request.method === "POST" && parts.join("/").match(/^v1\/context-imports\/[^/]+\/decision$/)) { const input = await body(request); const decision = text(input.decision); if (!["accepted","edited_and_accepted","held","rejected"].includes(decision)) return send(response, 400, { error: "import_decision_invalid" }); const result = db.prepare("UPDATE context_import_records SET decision=?,target_template_id=?,target_field_key=? WHERE id=?").run(decision, text(input.templateId) || null, text(input.fieldKey) || null, parts[2]); audit("decide_import", { importId: parts[2], decision }); return result.changes ? send(response, 200, { decision }) : send(response, 404, { error: "import_not_found" }); }
+    if (request.method === "POST" && url.pathname === "/v1/integration-imports") {
+      const input = validateIntegrationImport(await body(request)); const existing = db.prepare("SELECT id,decision FROM integration_import_records WHERE source_system=? AND source_import_id=?").get(input.sourceSystem, input.id) as any;
+      if (existing) return send(response, 200, { id: existing.id, decision: existing.decision, duplicate: true });
+      const createdAt = input.createdAt ?? now(), id = newId("integration_import"); db.prepare("INSERT INTO integration_import_records(id,source_system,source_import_id,source_reference_id,payload_json,decision,target_template_id,target_field_key,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)").run(id, input.sourceSystem, input.id, input.sourceReferenceId ?? null, JSON.stringify(input.payload), "pending", null, null, createdAt, now());
+      audit("receive_integration_import", { importId: id, sourceSystem: input.sourceSystem, sourceReferenceId: input.sourceReferenceId ?? null }); return send(response, 201, { id, sourceImportId: input.id, decision: "pending" });
+    }
+    if (request.method === "GET" && url.pathname === "/v1/integration-imports") return send(response, 200, { items: db.prepare("SELECT * FROM integration_import_records ORDER BY created_at DESC").all() });
+    if (request.method === "POST" && parts.join("/").match(/^v1\/integration-imports\/[^/]+\/decision$/)) { const input = await body(request); const decision = text(input.decision); if (!["accepted","edited_and_accepted","held","rejected"].includes(decision)) return send(response, 400, { error: "integration_import_decision_invalid" }); const result = db.prepare("UPDATE integration_import_records SET decision=?,target_template_id=?,target_field_key=?,updated_at=? WHERE id=?").run(decision, text(input.templateId) || null, text(input.fieldKey) || null, now(), parts[2]); audit("decide_integration_import", { importId: parts[2], decision }); return result.changes ? send(response, 200, { decision }) : send(response, 404, { error: "integration_import_not_found" }); }
     if (request.method === "POST" && (url.pathname === "/v1/context-exports/preview" || url.pathname === "/v1/context-exports")) { const input = await body(request); const format = text(input.format) as "markdown" | "json" | "agents" | "chatgpt"; if (!["markdown","json","agents","chatgpt"].includes(format)) return send(response, 400, { error: "export_format_invalid" }); const preview = exportPreview(text(input.profileId), format); if (url.pathname.endsWith("preview")) return send(response, 200, preview); const id = newId("export"); db.prepare("INSERT INTO context_exports(id,profile_id,format,content,omitted_count,created_at) VALUES(?,?,?,?,?,?)").run(id, preview.profile.id, format, preview.content, preview.omittedCount, now()); audit("export_context", { exportId: id, format, omittedCount: preview.omittedCount }); return send(response, 201, { id, ...preview }); }
     if (request.method === "GET" && parts[0] === "v1" && parts[1] === "context-exports" && parts[2]) { const item = db.prepare("SELECT * FROM context_exports WHERE id=?").get(parts[2]); return item ? send(response, 200, { item }) : send(response, 404, { error: "export_not_found" }); }
     if (request.method === "POST" && url.pathname === "/v1/privacy/safe-delete/plan") {
