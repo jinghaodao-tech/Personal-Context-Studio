@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -8,6 +9,8 @@ import { excerpt, readMarkdownSnapshot } from "../../../packages/documents/src/i
 import { createLocalAiProvider } from "../../../packages/ai-core/src/index.ts";
 import { RuntimeManager, detectOllama, detectOpenAiCompatible } from "../../../packages/local-ai-runtime/src/index.ts";
 import { dashboardHtml } from "./dashboardHtml.ts";
+import { hashIntegrationToken, integrationAuthorized, integrationPermissions, type IntegrationPermission } from "./integrationAccess.ts";
+import { applyMigrations } from "./migrations.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 const databasePath = process.env.PCS_DB ?? resolve(root, "data", "personal-context-studio.sqlite3");
@@ -15,7 +18,7 @@ const notesRoot = resolve(process.env.PCS_NOTES_DIR ?? resolve(root, "notes"));
 mkdirSync(dirname(databasePath), { recursive: true });
 mkdirSync(notesRoot, { recursive: true });
 const db = new DatabaseSync(databasePath);
-db.exec(readFileSync(resolve(root, "db", "schema.sql"), "utf8"));
+applyMigrations(db, readFileSync(resolve(root, "db", "schema.sql"), "utf8"));
 function ensureColumn(table: string, column: string, definition: string) { const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>; if (!columns.some((item) => item.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`); }
 ensureColumn("context_template_fields", "minimum_value", "REAL");
 ensureColumn("context_template_fields", "maximum_value", "REAL");
@@ -98,17 +101,32 @@ function exportPreview(profileId: string, format: "markdown" | "json" | "agents"
   const placeholders = selected.length ? selected.map(() => "?").join(",") : "''";
   const rows = db.prepare(`SELECT v.*,f.label,e.template_id FROM context_values v JOIN context_entries e ON e.id=v.entry_id JOIN context_template_fields f ON f.template_id=e.template_id AND f.field_key=v.field_key WHERE e.status='active' AND v.lifecycle_state='active' AND (e.template_id || ':' || v.field_key) IN (${placeholders}) ORDER BY v.updated_at DESC`).all(...selected.map((item) => `${item.template_id}:${item.field_key}`)) as any[];
   const latest = new Map<string, any>(); for (const row of rows) if (!latest.has(`${row.template_id}:${row.field_key}`)) latest.set(`${row.template_id}:${row.field_key}`, row);
-  const safe = [...latest.values()].filter((row) => eligibleForExport({ sharing: row.sharing, sensitivity: row.sensitivity, userConfirmed: Boolean(row.user_confirmed) }));
+  const omitted = { unconfirmed: 0, privateOrNever: 0, highlySensitive: 0, invalid: 0, truncated: 0 };
+  const safe = [...latest.values()].filter((row) => {
+    try { JSON.parse(row.value_json); } catch { omitted.invalid += 1; return false; }
+    if (!row.user_confirmed) { omitted.unconfirmed += 1; return false; }
+    if (row.sensitivity === "highly_sensitive") { omitted.highlySensitive += 1; return false; }
+    if (row.sharing === "private" || row.sharing === "never") { omitted.privateOrNever += 1; return false; }
+    return eligibleForExport({ sharing: row.sharing, sensitivity: row.sensitivity, userConfirmed: true });
+  });
   const content = formatExport(safe.map((row) => ({ label: row.label, value: JSON.parse(row.value_json) })), format);
   const maximum = typeof profile.maximum_characters === "number" ? profile.maximum_characters : 12000;
-  return { content: content.slice(0, maximum), omittedCount: latest.size - safe.length + (content.length > maximum ? 1 : 0), profile };
+  if (content.length > maximum) omitted.truncated = 1;
+  return {
+    schemaVersion: "pcs-context-export-v1",
+    generatedAt: now(),
+    content: content.slice(0, maximum),
+    omittedCount: Object.values(omitted).reduce((total, count) => total + count, 0),
+    omitted,
+    includedCount: safe.length,
+    profile,
+  };
 }
 
 function validTimestamp(value: unknown): value is string { return typeof value === "string" && !Number.isNaN(Date.parse(value)); }
 function ftsTerms(value: string) { return value.trim().split(/\s+/).map((term) => term.replaceAll('"', "")).filter(Boolean).slice(0, 12).map((term) => `"${term}"`).join(" AND "); }
 function destinationHost(value: string) { try { return new URL(value.includes("://") ? value : `https://${value}`).hostname.toLowerCase(); } catch { return ""; } }
 function activeExternalAiConsent(scope: "document" | "field", providerId: string, host: string, documentId = "", templateId = "", fieldKey = "") { return Boolean(db.prepare("SELECT 1 FROM context_external_ai_consents WHERE scope=? AND provider_id=? AND destination_host=? AND document_id=? AND template_id=? AND field_key=? AND revoked_at IS NULL").get(scope, providerId, host, documentId, templateId, fieldKey)); }
-
 function upsertDocument(inputPath: string) {
   const snapshot = readMarkdownSnapshot(notesRoot, inputPath);
   const existing = db.prepare("SELECT * FROM context_documents WHERE file_path=?").get(snapshot.relativePath) as any;
@@ -159,6 +177,9 @@ const server = createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/v1/dashboard/overview") return send(response, 200, dashboardOverview());
     if (request.method === "GET" && url.pathname === "/v1/dashboard/values") return send(response, 200, { items: dashboardValues() });
     if (request.method === "GET" && url.pathname === "/v1/dashboard/audit") return send(response, 200, { items: db.prepare("SELECT id,action,summary_json,created_at FROM privacy_audit_logs ORDER BY created_at DESC LIMIT 100").all() });
+    if (request.method === "GET" && url.pathname === "/v1/integration-clients") return send(response, 200, { items: db.prepare("SELECT id,name,permissions_json,is_active,created_at,updated_at FROM integration_clients ORDER BY created_at DESC").all() });
+    if (request.method === "POST" && url.pathname === "/v1/integration-clients") { const input = await body(request); const name = text(input.name); const permissions = Array.isArray(input.permissions) ? input.permissions.filter((item): item is IntegrationPermission => typeof item === "string" && (integrationPermissions as readonly string[]).includes(item)) : []; if (!name || !permissions.length) return send(response, 400, { error: "integration_client_invalid" }); const id = newId("client"), token = randomBytes(32).toString("base64url"), timestamp = now(); db.prepare("INSERT INTO integration_clients(id,name,token_hash,permissions_json,is_active,created_at,updated_at) VALUES(?,?,?,?,?,?,?)").run(id,name,hashIntegrationToken(token),JSON.stringify([...new Set(permissions)]),1,timestamp,timestamp); audit("create_integration_client", { clientId:id, permissions }); return send(response,201,{id,name,permissions,token}); }
+    if (request.method === "POST" && parts.join("/").match(/^v1\/integration-clients\/[^/]+\/revoke$/)) { const result=db.prepare("UPDATE integration_clients SET is_active=0,updated_at=? WHERE id=? AND is_active=1").run(now(),parts[2]); audit("revoke_integration_client",{clientId:parts[2]}); return result.changes?send(response,200,{revoked:true}):send(response,404,{error:"integration_client_not_found"}); }
     if (request.method === "GET" && url.pathname === "/v1/documents") return send(response, 200, { items: db.prepare("SELECT id,file_path,title,recorded_at,source_updated_at,content_hash,file_size,created_at,updated_at FROM context_documents WHERE archived_at IS NULL ORDER BY recorded_at DESC").all() });
     if (request.method === "POST" && url.pathname === "/v1/documents") {
       const input = await body(request); const filePath = text(input.filePath); if (!filePath) return send(response, 400, { error: "document_path_required" });
@@ -197,9 +218,9 @@ const server = createServer(async (request, response) => {
       for (const field of fields) if (!blockedFields.includes(field.field_key) && !activeExternalAiConsent("field", providerId, host, "", templateId, field.field_key)) missing.push(`field:${field.field_key}`);
       return send(response, 200, { allowed: !blockedFields.length && !missing.length, providerId, destinationHost: host, missing, blockedFields });
     }
-    if (request.method === "GET" && url.pathname === "/v1/context/analysis-snapshot") return send(response, 200, analysisSnapshot(url.searchParams.get("from") ?? undefined, url.searchParams.get("to") ?? undefined));
+    if (request.method === "GET" && url.pathname === "/v1/context/analysis-snapshot") { if (!integrationAuthorized(db,request,"read_snapshot")) return send(response,401,{error:"integration_authorization_required"}); return send(response, 200, analysisSnapshot(url.searchParams.get("from") ?? undefined, url.searchParams.get("to") ?? undefined)); }
     if (request.method === "GET" && url.pathname === "/v1/integration-template-requests") return send(response, 200, { items: db.prepare("SELECT id,source_system,source_request_id,source_reference_id,payload_json,status,template_id,created_at,updated_at FROM integration_template_requests ORDER BY created_at DESC").all() });
-    if (request.method === "POST" && url.pathname === "/v1/integration-template-requests") {
+    if (request.method === "POST" && url.pathname === "/v1/integration-template-requests") { if (!integrationAuthorized(db,request,"submit_template_request")) return send(response,401,{error:"integration_authorization_required"});
       const input = validateIntegrationTemplateRequest(await body(request)); const existing = db.prepare("SELECT id,status,template_id FROM integration_template_requests WHERE source_system=? AND source_request_id=?").get(input.sourceSystem, input.id) as any;
       if (existing) return send(response, 200, { id: existing.id, status: existing.status, templateId: existing.template_id, duplicate: true });
       const id = newId("integration_request"); db.prepare("INSERT INTO integration_template_requests(id,source_system,source_request_id,source_reference_id,payload_json,status,template_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)").run(id, input.sourceSystem, input.id, input.sourceReferenceId, JSON.stringify(input), "pending", null, input.createdAt, now());
@@ -232,6 +253,7 @@ const server = createServer(async (request, response) => {
     }
     if (request.method === "GET" && parts[0] === "v1" && parts[1] === "context-templates" && parts[2]) { const item = templateDetail(parts[2]); return item ? send(response, 200, { item }) : send(response, 404, { error: "template_not_found" }); }
     if (request.method === "POST" && parts.join("/").match(/^v1\/context-templates\/[^/]+\/activate$/)) { const updated = db.prepare("UPDATE context_templates SET status='active',updated_at=? WHERE id=? AND status='draft'").run(now(), parts[2]); return updated.changes ? send(response, 200, { activated: true }) : send(response, 404, { error: "template_not_found_or_not_draft" }); }
+    if (request.method === "POST" && parts.join("/").match(/^v1\/context-templates\/[^/]+\/archive$/)) { const updated = db.prepare("UPDATE context_templates SET status='archived',updated_at=? WHERE id=? AND status='draft'").run(now(), parts[2]); if (!updated.changes) return send(response, 404, { error: "template_not_found_or_not_draft" }); audit("archive_template", { templateId: parts[2] }); return send(response, 200, { archived: true }); }
     if (request.method === "POST" && url.pathname === "/v1/context-entries/candidates") {
       const input = await body(request); const template = templateDetail(text(input.templateId)); const values = input.values && typeof input.values === "object" ? input.values as Record<string, unknown> : null; const sourceDocumentId = text(input.sourceDocumentId);
       const document = sourceDocumentId ? db.prepare("SELECT id,recorded_at,content_hash FROM context_documents WHERE id=? AND archived_at IS NULL").get(sourceDocumentId) as any : null;
@@ -287,7 +309,7 @@ const server = createServer(async (request, response) => {
     if (request.method === "DELETE" && parts[0] === "v1" && parts[1] === "context-entries" && parts[2]) { db.prepare("UPDATE context_entries SET status='archived',updated_at=? WHERE id=?").run(now(), parts[2]); audit("archive_entry", { entryId: parts[2] }); return send(response, 200, { archived: true }); }
     if (request.method === "GET" && url.pathname === "/v1/context-profiles") return send(response, 200, { items: db.prepare("SELECT * FROM context_profiles ORDER BY updated_at DESC").all() });
     if (request.method === "POST" && url.pathname === "/v1/context-profiles") { const input = await body(request); const selected = Array.isArray(input.includedFields) ? input.includedFields as Array<{ templateId: string; fieldKey: string }> : []; if (!text(input.name) || !selected.length) return send(response, 400, { error: "profile_invalid" }); const id = newId("profile"), createdAt = now(); db.exec("BEGIN IMMEDIATE"); try { db.prepare("INSERT INTO context_profiles(id,name,target,detail_level,maximum_characters,created_at,updated_at) VALUES(?,?,?,?,?,?,?)").run(id, text(input.name), text(input.target) || "generic", text(input.detailLevel) || "standard", typeof input.maximumCharacters === "number" ? input.maximumCharacters : null, createdAt, createdAt); const insert = db.prepare("INSERT INTO context_profile_fields(profile_id,template_id,field_key) VALUES(?,?,?)"); for (const item of selected) insert.run(id, item.templateId, item.fieldKey); db.exec("COMMIT"); } catch (error) { db.exec("ROLLBACK"); throw error; } return send(response, 201, { id }); }
-    if (request.method === "POST" && url.pathname === "/v1/integration-imports") {
+    if (request.method === "POST" && url.pathname === "/v1/integration-imports") { if (!integrationAuthorized(db,request,"submit_import")) return send(response,401,{error:"integration_authorization_required"});
       const input = validateIntegrationImport(await body(request)); const existing = db.prepare("SELECT id,decision FROM integration_import_records WHERE source_system=? AND source_import_id=?").get(input.sourceSystem, input.id) as any;
       if (existing) return send(response, 200, { id: existing.id, decision: existing.decision, duplicate: true });
       const createdAt = input.createdAt ?? now(), id = newId("integration_import"); db.prepare("INSERT INTO integration_import_records(id,source_system,source_import_id,source_reference_id,payload_json,decision,target_template_id,target_field_key,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)").run(id, input.sourceSystem, input.id, input.sourceReferenceId ?? null, JSON.stringify(input.payload), "pending", null, null, createdAt, now());

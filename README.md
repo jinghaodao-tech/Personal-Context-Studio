@@ -29,9 +29,9 @@ deletion plans, and the local audit log. Markdown remains edited in Obsidian,
 VS Code, Cursor, or another editor; the PCS screen manages the structured
 information derived from those notes.
 
-This pre-release schema intentionally replaces the old document-body table. If
-an older development database exists, remove that local database and let PCS
-recreate it. Markdown files are not affected.
+PCS records applied SQLite schema versions in `schema_migrations`. Startup
+applies each migration transactionally and safely skips versions already
+recorded; Markdown files are never changed by a database migration.
 
 ## Markdown source model
 
@@ -112,6 +112,12 @@ Personal Context Studio never lets an external tool read its entire database by 
 Use `POST /v1/documents/search` to retrieve a bounded local result set, and use
 `GET /v1/context/analysis-snapshot` to provide only confirmed, shareable,
 non-highly-sensitive structured values to an explicitly connected local tool.
+The snapshot and inbound integration routes require a local integration client:
+create one through the management API, store its returned token in that
+client's secret store, and send `X-PCS-Client-Id` plus `Authorization: Bearer`.
+Clients receive only the explicit permissions `read_snapshot`,
+`submit_template_request`, and `submit_import`. The token is returned once,
+stored only as a SHA-256 hash, and can be revoked locally.
 
 Any local tool can submit a `pcs-integration-template-request-v1` payload to
 `POST /v1/integration-template-requests`. PCS keeps it pending, then creates a
@@ -147,3 +153,23 @@ authority.
 `private`, `never`, and `highly_sensitive` values are excluded from exports.
 The API rejects secret-like strings such as API keys and passwords. Safe delete
 requires a generated confirmation token and writes a local audit record.
+
+## Operational behavior
+
+The watcher isolates failures per Markdown file, retries only the failed item
+with bounded exponential backoff, and writes a body-free health state to
+`data/watcher-state.json` (override with `PCS_WATCH_STATE`). A temporary API
+outage therefore does not discard the next sync cycle or prevent other stable
+notes from indexing.
+
+Exports return the `pcs-context-export-v1` envelope alongside the rendered
+content. It reports included values and omitted counts by reason
+(`unconfirmed`, `privateOrNever`, `highlySensitive`, `invalid`, and
+`truncated`), so a receiving tool can distinguish an intentional omission from
+an empty profile without being sent the omitted value.
+
+Run the complete local verification suite with:
+
+```powershell
+npm.cmd run verify
+```
