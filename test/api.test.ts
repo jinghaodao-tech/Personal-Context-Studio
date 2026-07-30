@@ -108,3 +108,33 @@ test("watcher indexes stable Markdown files and archives deleted files", async (
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("confirmed values retain append-only revisions and safe deletion is planned", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "pcs-revisions-"));
+  const port = 19150 + Math.floor(Math.random() * 200);
+  const child = spawn(process.execPath, ["--experimental-strip-types", "apps/api/src/server.ts"], { env: { ...process.env, PCS_PORT: String(port), PCS_DB: join(directory, "context.sqlite3") }, stdio: "ignore" });
+  const api = async (path: string, method = "GET", value?: unknown) => {
+    const response = await fetch(`http://127.0.0.1:${port}${path}`, { method, headers: value ? { "content-type": "application/json" } : undefined, body: value ? JSON.stringify(value) : undefined });
+    return { response, body: await response.json() as any };
+  };
+  try {
+    for (let attempt = 0; attempt < 30; attempt += 1) { try { if ((await fetch(`http://127.0.0.1:${port}/health`)).ok) break; } catch { /* wait */ } await new Promise((resolve) => setTimeout(resolve, 75)); }
+    const template = await api("/v1/context-templates", "POST", { name: "Daily state", purpose: "self_understanding", fields: [{ fieldKey: "energy", label: "Energy", valueType: "number", required: true, displayOrder: 1, sharingDefault: "always", sensitivity: "normal", reason: "Track energy" }] });
+    await api(`/v1/context-templates/${template.body.item.id}/activate`, "POST");
+    const entry = await api("/v1/context-entries", "POST", { templateId: template.body.item.id, values: { energy: 2 } });
+    const history = await api(`/v1/context-entries/${entry.body.id}/values/energy/revisions`);
+    assert.equal(history.body.items.length, 1); assert.equal(history.body.items[0].change_type, "initial");
+    assert.equal((await api(`/v1/context-entries/${entry.body.id}`, "PATCH", { fieldKey: "energy", value: 4, changeType: "correction", reason: "Corrected after checking the note", sharing: "purpose_only" })).response.status, 200);
+    const corrected = await api(`/v1/context-entries/${entry.body.id}/values/energy/revisions`);
+    assert.equal(corrected.body.items.length, 2); assert.equal(corrected.body.items[0].change_type, "correction");
+    assert.equal((await api("/v1/dashboard/overview")).body.confirmedValues, 1);
+    const retracted = await api(`/v1/context-entries/${entry.body.id}`, "PATCH", { fieldKey: "energy", value: 4, changeType: "retraction", reason: "No longer applicable" });
+    assert.equal(retracted.body.lifecycleState, "retracted");
+    assert.equal((await api("/v1/metheory/analysis-snapshot")).body.records.length, 0);
+    const plan = await api("/v1/privacy/safe-delete/plan", "POST", { entryId: entry.body.id });
+    assert.equal(plan.body.summary.revisions, 3);
+    assert.equal((await api("/v1/privacy/safe-delete/execute", "POST", { entryId: entry.body.id, planId: plan.body.planId, confirmation: "wrong" })).response.status, 400);
+    assert.equal((await api("/v1/privacy/safe-delete/execute", "POST", { entryId: entry.body.id, planId: plan.body.planId, confirmation: plan.body.confirmation })).body.deleted, true);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/`)).headers.get("content-type"), "text/html; charset=utf-8");
+  } finally { child.kill(); await new Promise((resolve) => setTimeout(resolve, 100)); rmSync(directory, { recursive: true, force: true }); }
+});

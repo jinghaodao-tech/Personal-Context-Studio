@@ -29,6 +29,8 @@ async function main() {
   if (command === "template" && sub === "generate" && args[0]) return generateTemplate(args.join(" "));
   if (command === "entry" && sub === "list") return print(await request("/v1/context-entries"));
   if (command === "entry" && sub === "create" && args[0]) return print(await request("/v1/context-entries", { method: "POST", headers: { "content-type": "application/json" }, body: readFileSync(args[0], "utf8") }));
+  if (command === "entry" && sub === "value-history" && args[0] && args[1]) return print(await request(`/v1/context-entries/${encodeURIComponent(args[0])}/values/${encodeURIComponent(args[1])}/revisions`));
+  if (command === "entry" && sub === "revise" && args[0] && args[1] && args[2]) return print(await request(`/v1/context-entries/${encodeURIComponent(args[0])}/values/${encodeURIComponent(args[1])}/revisions`, { method: "POST", headers: { "content-type": "application/json" }, body: readFileSync(args[2], "utf8") }));
   if (command === "document" && sub === "list") return print(await request("/v1/documents"));
   if (command === "document" && sub === "sync" && args[0]) return print(await request("/v1/documents", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ filePath: args[0] }) }));
   if (command === "document" && sub === "search" && args[0]) return print(await request("/v1/documents/search", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query: args.join(" ") }) }));
@@ -47,6 +49,8 @@ async function main() {
   if (command === "import" && sub === "list") return print(await request("/v1/context-imports"));
   if (command === "import" && sub === "decide" && args[0] && args[1]) return print(await request(`/v1/context-imports/${encodeURIComponent(args[0])}/decision`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ decision: args[1], templateId: args[2], fieldKey: args[3] }) }));
   if (command === "export" && args[0]) return print(await request("/v1/context-exports", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ profileId: args[0], format: args[1] ?? "markdown" }) }));
+  if (command === "privacy" && sub === "safe-delete-plan" && args[0]) return print(await request("/v1/privacy/safe-delete/plan", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ entryId: args[0] }) }));
+  if (command === "privacy" && sub === "safe-delete-execute" && args[0] && args[1] && args[2]) return print(await request("/v1/privacy/safe-delete/execute", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ entryId: args[0], planId: args[1], confirmation: args[2] }) }));
   if (command === "experiment" && sub === "request" && args[0]) return print(await request("/v1/experiment-template-requests", { method: "POST", headers: { "content-type": "application/json" }, body: readFileSync(args[0], "utf8") }));
   if (command === "experiment" && sub === "list") return print(await request("/v1/experiment-template-requests"));
   if (command === "experiment" && sub === "create-template" && args[0]) return print(await request(`/v1/experiment-template-requests/${encodeURIComponent(args[0])}/create-template`, { method: "POST" }));

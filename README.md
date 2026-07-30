@@ -23,6 +23,12 @@ different local SQLite path. `PCS_NOTES_DIR` must identify the Markdown root.
 The watcher requires the same value. No editor plugin, bidirectional sync,
 cloud sync, remote AI integration, or secrets storage is required.
 
+Open `http://127.0.0.1:8300/` for the local management screen. It shows
+confirmed values, pending Review work, shareable values, revisions, safe
+deletion plans, and the local audit log. Markdown remains edited in Obsidian,
+VS Code, Cursor, or another editor; the PCS screen manages the structured
+information derived from those notes.
+
 This pre-release schema intentionally replaces the old document-body table. If
 an older development database exists, remove that local database and let PCS
 recreate it. Markdown files are not affected.
@@ -43,6 +49,29 @@ unchanged file preserves its document ID through its content hash.
 Extraction candidates keep the source content hash. PCS rejects approval if
 the note has changed since extraction, so stale values cannot silently enter
 the reviewed dataset.
+
+## Value governance
+
+`context_values` holds the current confirmed value. `context_value_revisions`
+is append-only history. Confirmation creates an `initial` revision; subsequent
+changes must record one of `correction`, `state_change`, `exception`,
+`reaffirmation`, or `retraction`, together with a reason. A retracted value is
+retained in local history but excluded from exports and MeTheory snapshots.
+
+Use the management screen, or these local API/CLI paths:
+
+```powershell
+npm.cmd run cli -- entry value-history <entry-id> <field-key> --json
+npm.cmd run cli -- entry revise <entry-id> <field-key> revision.json --json
+npm.cmd run cli -- privacy safe-delete-plan <entry-id> --json
+```
+
+`revision.json` contains `value`, `changeType`, and a non-empty `reason`; it
+may also include `validFrom`, `validTo`, `sharing`, and `sensitivity`.
+Safe deletion first creates a persistent plan and confirmation token. Execution
+deletes the structured Entry, its value revisions, candidate metadata, and
+affected stored exports; it never edits the Markdown source file. Audit logs
+retain metadata and counts, not note bodies or secret values.
 
 ## Read-only MCP
 
@@ -92,7 +121,8 @@ check-ins remain a MeTheory responsibility.
 
 `POST /v1/context-entries/candidates` records a local-AI extraction candidate
 against a local document. Its values begin unconfirmed and become eligible for
-analysis only after a per-value `PATCH /v1/context-entries/:id` review.
+analysis only after a per-value `PATCH /v1/context-entries/:id` review, which
+creates the first confirmed revision.
 
 ## MeTheory imports
 
