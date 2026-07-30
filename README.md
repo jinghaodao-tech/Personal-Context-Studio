@@ -73,6 +73,63 @@ deletes the structured Entry, its value revisions, candidate metadata, and
 affected stored exports; it never edits the Markdown source file. Audit logs
 retain metadata and counts, not note bodies or secret values.
 
+## Review, staleness, and reconfirmation
+
+Extraction candidates are reviewed value by value. A user can accept the
+candidate, accept an edited replacement, mark it unknown, or reject it. Every
+decision is retained in `context_value_reviews`; rejected and unknown values
+remain unconfirmed and are never converted into a false or empty value.
+
+Review is blocked when the Markdown source hash changed. PCS also exposes due
+reconfirmations for confirmed values with a `reconfirmAfter` timestamp and
+records a `reaffirmation` revision when the user confirms that a value is still
+applicable. When two active candidate values for the same field and source note
+disagree, PCS records an unresolved conflict for an explicit user decision.
+
+The dashboard Review tab exposes these flows. The CLI equivalents are:
+
+```powershell
+npm.cmd run cli -- entry review <entry-id> <field-key> accepted "Matches note"
+npm.cmd run cli -- entry reconfirm <entry-id> <field-key> "Still applicable"
+```
+
+## Purpose-limited sharing and export history
+
+`purpose_only` is not a broad sharing permission. Create a named local purpose,
+assign it to individual confirmed values, and bind the same purpose to an
+export profile. PCS excludes a `purpose_only` value when the profile has no
+matching purpose. `always`, `private`, `never`, and `highly_sensitive` retain
+their stricter behavior.
+
+The Sharing tab lets the user create purposes, set allowed purposes per value,
+preview a profile before it is recorded as an export, and inspect export
+history. Stored history contains the destination label, format, time, and an
+omission manifest, rather than duplicating omitted values.
+
+```powershell
+npm.cmd run cli -- sharing create-purpose work-planning "Planning assistance"
+npm.cmd run cli -- sharing set-value-purposes <entry-id> <field-key> <purpose-id>
+npm.cmd run cli -- export history --json
+```
+
+## Local backups and restore
+
+Create backups through PCS while the API is running. They are SQLite-consistent
+snapshots written under `data/backups` by default and recorded with file size
+and SHA-256 hash. A restore always requires a separate restore plan and its
+exact confirmation text. On execution PCS validates the backup, replaces the
+database, and stops the local API; restart `npm.cmd run dev` afterwards.
+
+```powershell
+npm.cmd run cli -- backup create --json
+npm.cmd run cli -- backup list --json
+npm.cmd run cli -- backup restore-plan <backup-id> --json
+npm.cmd run cli -- backup restore <backup-id> <plan-id> "RESTORE <backup-id>"
+```
+
+Backups contain the local PCS database. Keep the backup directory on storage
+with the same privacy protections as the primary database.
+
 ## Read-only MCP
 
 Start the MCP server over stdio with:
