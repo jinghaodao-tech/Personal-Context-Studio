@@ -1,5 +1,7 @@
 # Personal Context Studio
 
+The current product contract is [docs/current-product-spec.md](docs/current-product-spec.md). Architecture decisions are recorded in [docs/adr](docs/adr) and the main usability notes are in [docs/usability-findings.md](docs/usability-findings.md).
+
 Personal Context Studio is a separate, local-first SQLite application for
 user-confirmed context that may be shared with AI tools. Markdown files are the
 canonical human record and can be edited with VS Code, Cursor, Obsidian, or any

@@ -9,7 +9,15 @@ import type { ContextTemplateField } from "../../../packages/domain/src/index.ts
 const api = process.env.PCS_API_URL ?? "http://127.0.0.1:8300";
 const json = process.argv.includes("--json");
 async function request(path: string, init?: RequestInit) { const response = await fetch(`${api}${path}`, { ...init, headers: { ...(process.env.PCS_ADMIN_TOKEN ? { "x-pcs-admin-token": process.env.PCS_ADMIN_TOKEN } : {}), ...(init?.headers ?? {}) } }); const value = await response.json(); if (!response.ok) throw new Error((value as any).error ?? `api_${response.status}`); return value; }
-function print(value: unknown) { if (json) return console.log(JSON.stringify(value, null, 2)); if (typeof value === "object") return console.log(JSON.stringify(value, null, 2)); console.log(String(value)); }
+function print(value: unknown) {
+  if (json) return console.log(JSON.stringify(value, null, 2));
+  if (Array.isArray(value)) return value.forEach((item) => print(item));
+  if (value && typeof value === "object") {
+    for (const [key, item] of Object.entries(value)) console.log(`${key}: ${typeof item === "object" ? JSON.stringify(item) : String(item)}`);
+    return;
+  }
+  console.log(String(value));
+}
 const notesRoot = resolve(process.env.PCS_NOTES_DIR ?? resolve(import.meta.dirname, "../../../notes"));
 const provider = () => createLocalAiProvider({ provider: process.env.PCS_AI_PROVIDER, model: process.env.PCS_AI_MODEL, baseUrl: process.env.PCS_AI_BASE_URL });
 const destinationHost = () => process.env.PCS_AI_DESTINATION_HOST ?? (process.env.PCS_AI_PROVIDER === "manual" ? "chatgpt.com" : process.env.PCS_AI_BASE_URL ?? "");

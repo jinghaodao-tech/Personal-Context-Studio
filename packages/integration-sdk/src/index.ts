@@ -1,4 +1,4 @@
-import { localPcsUrl, validateContextAnalysisSnapshot, validateIntegrationImport, validateIntegrationTemplateRequest, type ContextAnalysisSnapshotV1, type IntegrationImportV1, type IntegrationTemplateRequestV1 } from "../../integration-contracts/src/index.ts";
+import { localPcsUrl, validateContextAnalysisSnapshot, validateIntegrationImport, validateIntegrationTemplateRequest, type ContextAnalysisSnapshot, type IntegrationImportV1, type IntegrationTemplateRequestV1 } from "../../integration-contracts/src/index.ts";
 
 export type PcsIntegrationClientOptions = {
   baseUrl: string;
@@ -21,8 +21,13 @@ export class PcsIntegrationClient {
     this.fetchImplementation = options.fetchImplementation ?? fetch;
   }
 
-  async getAnalysisSnapshot(query = ""): Promise<ContextAnalysisSnapshotV1> {
-    return validateContextAnalysisSnapshot(await this.request(`/v1/context/analysis-snapshot${query ? `?${query}` : ""}`));
+  async getAnalysisSnapshot(profileId: string, options: { from?: string; to?: string; timezone?: string } = {}): Promise<ContextAnalysisSnapshot> {
+    if (!profileId.trim()) throw new Error("pcs_profile_required");
+    const query = new URLSearchParams({ profileId });
+    if (options.from) query.set("from", options.from);
+    if (options.to) query.set("to", options.to);
+    if (options.timezone) query.set("timezone", options.timezone);
+    return validateContextAnalysisSnapshot(await this.request(`/v1/context/analysis-snapshot?${query}`));
   }
 
   async submitTemplateRequest(input: IntegrationTemplateRequestV1) {

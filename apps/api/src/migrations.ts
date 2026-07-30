@@ -70,6 +70,37 @@ export function applyMigrations(db: DatabaseSync, schemaSql: string) {
       CREATE INDEX IF NOT EXISTS context_provenance_subject_idx ON context_provenance(subject_type,subject_id,created_at DESC);
       CREATE INDEX IF NOT EXISTS context_provenance_source_idx ON context_provenance(source_ref,created_at DESC);
     `) },
+    { version: "007_template_versions_and_export_limits", apply: () => {
+      const addColumn = (table: string, column: string, definition: string) => {
+        const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+        if (!columns.some((item) => item.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+      };
+      addColumn("context_templates", "parent_template_id", "TEXT");
+      addColumn("context_templates", "immutable", "INTEGER NOT NULL DEFAULT 0");
+      addColumn("context_profiles", "maximum_tokens", "INTEGER");
+      addColumn("context_exports", "target", "TEXT NOT NULL DEFAULT 'markdown_manual'");
+      addColumn("context_exports", "preview_fingerprint", "TEXT");
+      addColumn("context_exports", "maximum_tokens", "INTEGER");
+      db.exec("CREATE INDEX IF NOT EXISTS context_templates_parent_idx ON context_templates(parent_template_id,version DESC)");
+      db.exec("CREATE INDEX IF NOT EXISTS context_exports_fingerprint_idx ON context_exports(preview_fingerprint)");
+    } },
+    { version: "008_legacy_column_compatibility", apply: () => {
+      const addColumn = (table: string, column: string, definition: string) => {
+        const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+        if (!columns.some((item) => item.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+      };
+      addColumn("context_template_fields", "minimum_value", "REAL");
+      addColumn("context_template_fields", "maximum_value", "REAL");
+      addColumn("context_template_fields", "unit", "TEXT");
+      addColumn("context_template_fields", "analysis_role", "TEXT");
+      addColumn("context_template_fields", "analysis_role_confirmed", "INTEGER NOT NULL DEFAULT 0");
+      addColumn("context_template_fields", "analysis_usage", "TEXT NOT NULL DEFAULT 'excluded'");
+      addColumn("context_template_fields", "analysis_merge_allowed", "INTEGER NOT NULL DEFAULT 0");
+      addColumn("context_values", "current_revision_id", "TEXT");
+      addColumn("context_values", "lifecycle_state", "TEXT NOT NULL DEFAULT 'active'");
+      addColumn("integration_template_requests", "source_request_id", "TEXT NOT NULL DEFAULT ''");
+      addColumn("integration_import_records", "source_import_id", "TEXT NOT NULL DEFAULT ''");
+    } },
   ];
   const applied = new Set((db.prepare("SELECT version FROM schema_migrations").all() as Array<{ version: string }>).map((row) => row.version));
   for (const migration of migrations) {
