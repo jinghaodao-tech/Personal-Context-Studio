@@ -43,7 +43,7 @@ test("local documents feed reviewed analysis snapshots and generic integration t
     const storedDocument = await api(`/v1/documents/${document.body.id}`);
     assert.equal("body" in storedDocument.body.item, false);
     assert.match((await api(`/v1/documents/${document.body.id}/excerpt?maxCharacters=200`)).body.excerpt, /energy/);
-    const template = await api("/v1/context-templates", "POST", { name: "Daily signal", purpose: "self_understanding", fields: [{ fieldKey: "energy", label: "Energy", valueType: "number", required: true, displayOrder: 1, sharingDefault: "purpose_only", sensitivity: "normal", reason: "Compare energy" }] });
+    const template = await api("/v1/context-templates", "POST", { name: "Daily signal", purpose: "self_understanding", fields: [{ fieldKey: "energy", label: "Energy", valueType: "number", required: true, displayOrder: 1, analysisRole: "outcome", analysisRoleConfirmed: true, analysisUsage: "outcome", sharingDefault: "purpose_only", sensitivity: "normal", reason: "Compare energy" }] });
     const templateId = template.body.item.id; await api(`/v1/context-templates/${templateId}/activate`, "POST");
     const authorizationBefore = await api("/v1/privacy/external-ai/authorize-extraction", "POST", { documentId: document.body.id, templateId, providerId: "manual", destinationHost: "chatgpt.com" });
     assert.equal(authorizationBefore.body.allowed, false);
@@ -60,7 +60,11 @@ test("local documents feed reviewed analysis snapshots and generic integration t
     assert.equal((await api("/v1/context/analysis-snapshot")).response.status, 401);
     const integrationClient = await api("/v1/integration-clients", "POST", { name: "Snapshot consumer", permissions: ["read_snapshot", "submit_template_request"] });
     const integrationHeaders = { "x-pcs-client-id": integrationClient.body.id, authorization: `Bearer ${integrationClient.body.token}` };
-    const snapshot = await api("/v1/context/analysis-snapshot", "GET", undefined, integrationHeaders); assert.equal(snapshot.body.schemaVersion, "pcs-context-analysis-snapshot-v1"); assert.equal(snapshot.body.records[0].values[0].value, 4);
+    assert.equal((await api("/v1/context/analysis-snapshot", "GET", undefined, integrationHeaders)).response.status, 400);
+    const purpose = await api("/v1/sharing-purposes", "POST", { name: "self-understanding" });
+    await api(`/v1/context-entries/${candidate.body.id}/values/energy/purposes`, "PUT", { purposeIds: [purpose.body.id] });
+    const snapshotProfile = await api("/v1/context-profiles", "POST", { name: "Snapshot profile", target: "json", purposeId: purpose.body.id, includedFields: [{ templateId, fieldKey: "energy" }] });
+    const snapshot = await api(`/v1/context/analysis-snapshot?profileId=${snapshotProfile.body.id}`, "GET", undefined, integrationHeaders); assert.equal(snapshot.body.schemaVersion, "pcs-analysis-snapshot-v2"); assert.equal(snapshot.body.records[0].values[0].value, 4);
     const staleCandidate = await api("/v1/context-entries/candidates", "POST", { templateId, sourceDocumentId: document.body.id, provider: "ollama", values: { energy: 2 } });
     writeFileSync(notePath, "---\nrecorded_at: 2026-07-01T09:00:00.000Z\ntitle: Work day\n---\nThe note changed after extraction.", "utf8");
     await api("/v1/documents", "POST", { filePath: "daily/2026-07-01.md" });
@@ -140,7 +144,8 @@ test("confirmed values retain append-only revisions and safe deletion is planned
     const retracted = await api(`/v1/context-entries/${entry.body.id}`, "PATCH", { fieldKey: "energy", value: 4, changeType: "retraction", reason: "No longer applicable" });
     assert.equal(retracted.body.lifecycleState, "retracted");
     const snapshotClient = await api("/v1/integration-clients", "POST", { name: "Revision test", permissions: ["read_snapshot"] });
-    const authorizedSnapshot = await fetch(`http://127.0.0.1:${port}/v1/context/analysis-snapshot`, { headers: { "x-pcs-client-id": snapshotClient.body.id, authorization: `Bearer ${snapshotClient.body.token}` } });
+    const snapshotProfile = await api("/v1/context-profiles", "POST", { name: "Revision profile", target: "json", includedFields: [{ templateId: template.body.item.id, fieldKey: "energy" }] });
+    const authorizedSnapshot = await fetch(`http://127.0.0.1:${port}/v1/context/analysis-snapshot?profileId=${snapshotProfile.body.id}`, { headers: { "x-pcs-client-id": snapshotClient.body.id, authorization: `Bearer ${snapshotClient.body.token}` } });
     assert.equal((await authorizedSnapshot.json() as any).records.length, 0);
     const plan = await api("/v1/privacy/safe-delete/plan", "POST", { entryId: entry.body.id });
     assert.equal(plan.body.summary.revisions, 3);

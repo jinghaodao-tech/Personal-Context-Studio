@@ -22,8 +22,11 @@ test("management and integration credentials stay within their own API boundary"
     assert.equal((await api("/v1/context-templates", "GET", undefined, managementHeaders)).response.status, 200);
     const created = await api("/v1/integration-clients", "POST", { name: "SDK test", permissions: ["read_snapshot", "submit_import"] }, managementHeaders);
     assert.equal(created.response.status, 201);
+    const template = await api("/v1/context-templates", "POST", { name: "SDK profile", purpose: "test", fields: [{ fieldKey: "context", label: "Context", valueType: "text", required: false, displayOrder: 1, sharingDefault: "always", sensitivity: "normal", reason: "SDK test" }] }, managementHeaders);
+    await api(`/v1/context-templates/${template.body.item.id}/activate`, "POST", undefined, managementHeaders);
+    const profile = await api("/v1/context-profiles", "POST", { name: "SDK profile", target: "json", includedFields: [{ templateId: template.body.item.id, fieldKey: "context" }] }, managementHeaders);
     const sdk = new PcsIntegrationClient({ baseUrl: `http://127.0.0.1:${port}`, clientId: created.body.id, token: created.body.token });
-    assert.equal((await sdk.getAnalysisSnapshot()).schemaVersion, "pcs-context-analysis-snapshot-v1");
+    assert.equal((await sdk.getAnalysisSnapshot(profile.body.id)).schemaVersion, "pcs-analysis-snapshot-v2");
     const imported = await sdk.submitImport({ id: "sdk_import", sourceSystem: "sdk_test", payload: { kind: "candidate" } });
     assert.equal((imported as any).decision, "pending");
     assert.equal((await api("/v1/context-templates", "GET", undefined, { "x-pcs-client-id": created.body.id, authorization: `Bearer ${created.body.token}` })).response.status, 401);
