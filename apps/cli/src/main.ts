@@ -8,7 +8,7 @@ import type { ContextTemplateField } from "../../../packages/domain/src/index.ts
 
 const api = process.env.PCS_API_URL ?? "http://127.0.0.1:8300";
 const json = process.argv.includes("--json");
-async function request(path: string, init?: RequestInit) { const response = await fetch(`${api}${path}`, init); const value = await response.json(); if (!response.ok) throw new Error((value as any).error ?? `api_${response.status}`); return value; }
+async function request(path: string, init?: RequestInit) { const response = await fetch(`${api}${path}`, { ...init, headers: { ...(process.env.PCS_ADMIN_TOKEN ? { "x-pcs-admin-token": process.env.PCS_ADMIN_TOKEN } : {}), ...(init?.headers ?? {}) } }); const value = await response.json(); if (!response.ok) throw new Error((value as any).error ?? `api_${response.status}`); return value; }
 function print(value: unknown) { if (json) return console.log(JSON.stringify(value, null, 2)); if (typeof value === "object") return console.log(JSON.stringify(value, null, 2)); console.log(String(value)); }
 const notesRoot = resolve(process.env.PCS_NOTES_DIR ?? resolve(import.meta.dirname, "../../../notes"));
 const provider = () => createLocalAiProvider({ provider: process.env.PCS_AI_PROVIDER, model: process.env.PCS_AI_MODEL, baseUrl: process.env.PCS_AI_BASE_URL });
@@ -30,6 +30,7 @@ async function main() {
   if (command === "entry" && sub === "list") return print(await request("/v1/context-entries"));
   if (command === "entry" && sub === "create" && args[0]) return print(await request("/v1/context-entries", { method: "POST", headers: { "content-type": "application/json" }, body: readFileSync(args[0], "utf8") }));
   if (command === "entry" && sub === "value-history" && args[0] && args[1]) return print(await request(`/v1/context-entries/${encodeURIComponent(args[0])}/values/${encodeURIComponent(args[1])}/revisions`));
+  if (command === "entry" && sub === "provenance" && args[0]) return print(await request(`/v1/context-entries/${encodeURIComponent(args[0])}/provenance`));
   if (command === "entry" && sub === "revise" && args[0] && args[1] && args[2]) return print(await request(`/v1/context-entries/${encodeURIComponent(args[0])}/values/${encodeURIComponent(args[1])}/revisions`, { method: "POST", headers: { "content-type": "application/json" }, body: readFileSync(args[2], "utf8") }));
   if (command === "entry" && sub === "review" && args[0] && args[1] && args[2]) return print(await request(`/v1/context-entries/${encodeURIComponent(args[0])}/values/${encodeURIComponent(args[1])}/review`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ decision: args[2], reason: args.slice(3).join(" ") || `Reviewed as ${args[2]}` }) }));
   if (command === "entry" && sub === "reconfirm" && args[0] && args[1]) return print(await request(`/v1/context-entries/${encodeURIComponent(args[0])}/values/${encodeURIComponent(args[1])}/reconfirm`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ reason: args.slice(2).join(" ") || "Reconfirmed by user" }) }));

@@ -1,0 +1,42 @@
+import { localPcsUrl, validateContextAnalysisSnapshot, validateIntegrationImport, validateIntegrationTemplateRequest, type ContextAnalysisSnapshotV1, type IntegrationImportV1, type IntegrationTemplateRequestV1 } from "../../integration-contracts/src/index.ts";
+
+export type PcsIntegrationClientOptions = {
+  baseUrl: string;
+  clientId: string;
+  token: string;
+  fetchImplementation?: typeof fetch;
+};
+
+export class PcsIntegrationClient {
+  private readonly baseUrl: string;
+  private readonly clientId: string;
+  private readonly token: string;
+  private readonly fetchImplementation: typeof fetch;
+
+  constructor(options: PcsIntegrationClientOptions) {
+    this.baseUrl = localPcsUrl(options.baseUrl).toString().replace(/\/$/, "");
+    if (!options.clientId || !options.token) throw new Error("pcs_integration_credentials_required");
+    this.clientId = options.clientId;
+    this.token = options.token;
+    this.fetchImplementation = options.fetchImplementation ?? fetch;
+  }
+
+  async getAnalysisSnapshot(query = ""): Promise<ContextAnalysisSnapshotV1> {
+    return validateContextAnalysisSnapshot(await this.request(`/v1/context/analysis-snapshot${query ? `?${query}` : ""}`));
+  }
+
+  async submitTemplateRequest(input: IntegrationTemplateRequestV1) {
+    return this.request("/v1/integration-template-requests", { method: "POST", body: JSON.stringify(validateIntegrationTemplateRequest(input)) });
+  }
+
+  async submitImport(input: IntegrationImportV1) {
+    return this.request("/v1/integration-imports", { method: "POST", body: JSON.stringify(validateIntegrationImport(input)) });
+  }
+
+  private async request(path: string, init: RequestInit = {}) {
+    const response = await this.fetchImplementation(`${this.baseUrl}${path}`, { ...init, headers: { "content-type": "application/json", "x-pcs-client-id": this.clientId, authorization: `Bearer ${this.token}`, ...(init.headers ?? {}) } });
+    const payload = await response.json() as unknown;
+    if (!response.ok) throw new Error(typeof payload === "object" && payload && "error" in payload ? String((payload as { error: unknown }).error) : `pcs_integration_${response.status}`);
+    return payload;
+  }
+}

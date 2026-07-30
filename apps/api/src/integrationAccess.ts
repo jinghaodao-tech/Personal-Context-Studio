@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 
@@ -7,6 +7,20 @@ export type IntegrationPermission = typeof integrationPermissions[number];
 
 export function hashIntegrationToken(value: string) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+export function managementAuthorized(request: IncomingMessage, configuredToken: string | undefined) {
+  if (!configuredToken) return true;
+  const supplied = typeof request.headers["x-pcs-admin-token"] === "string" ? request.headers["x-pcs-admin-token"] : "";
+  const expected = Buffer.from(configuredToken);
+  const actual = Buffer.from(supplied);
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+export function isIntegrationRequest(method: string | undefined, pathname: string) {
+  return (method === "GET" && pathname === "/v1/context/analysis-snapshot")
+    || (method === "POST" && pathname === "/v1/integration-template-requests")
+    || (method === "POST" && pathname === "/v1/integration-imports");
 }
 
 export function integrationAuthorized(db: DatabaseSync, request: IncomingMessage, permission: IntegrationPermission) {

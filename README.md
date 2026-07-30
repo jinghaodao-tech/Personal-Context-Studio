@@ -205,6 +205,62 @@ submit a template request or a hypothesis payload using the same generic
 contract. PCS Core has no MeTheory-specific routes, schema types, or write
 authority.
 
+## Provenance
+
+PCS stores a local, append-only provenance event for indexed documents,
+candidate extraction, user confirmation and review, integration imports,
+exports, and backups. An event contains only IDs, source references, content
+or payload hashes, provider/model identifiers, and small operational metadata.
+It deliberately does not copy Markdown bodies or structured values into the
+provenance table. Retrieve the history for an Entry with:
+
+```text
+GET /v1/context-entries/:entryId/provenance
+```
+
+```powershell
+npm.cmd run cli -- entry provenance <entry-id> --json
+```
+
+## Management and Integration access
+
+PCS has two separate local API surfaces. Management endpoints create or review
+local records, configure sharing, and manage integration clients. Integration
+endpoints are limited to analysis snapshots, template requests, and pending
+imports; they cannot activate templates, confirm values, or delete data.
+
+Set `PCS_ADMIN_TOKEN` to require the `X-PCS-Admin-Token` header on management
+requests. The CLI forwards this environment variable automatically. When this
+mode is enabled, the local dashboard asks for the token once per browser
+session and keeps it only in browser session storage. Do not put this token in
+notes, SQLite exports, source control, or external AI prompts.
+
+Integration clients use a separate client ID and Bearer token with only
+`read_snapshot`, `submit_template_request`, or `submit_import`. Their tokens
+are returned once, stored only as hashes by PCS, and are not accepted for the
+management API.
+
+## Integration SDK and contracts
+
+`packages/integration-contracts` defines the versioned JSON envelopes and
+validators. `packages/integration-sdk` provides `PcsIntegrationClient` for a
+connected local tool. It accepts only loopback PCS URLs and always sends the
+client ID plus Bearer token; it exposes no management operations.
+
+```ts
+import { PcsIntegrationClient } from "./packages/integration-sdk/src/index.ts";
+
+const pcs = new PcsIntegrationClient({
+  baseUrl: "http://127.0.0.1:8300",
+  clientId: process.env.PCS_CLIENT_ID!,
+  token: process.env.PCS_CLIENT_TOKEN!,
+});
+const snapshot = await pcs.getAnalysisSnapshot();
+```
+
+The test suite runs this SDK against a temporary PCS API with real credentials,
+so contract drift between the client and integration routes is detected.
+
 ## Safety
 
 `private`, `never`, and `highly_sensitive` values are excluded from exports.
@@ -217,7 +273,10 @@ The watcher isolates failures per Markdown file, retries only the failed item
 with bounded exponential backoff, and writes a body-free health state to
 `data/watcher-state.json` (override with `PCS_WATCH_STATE`). A temporary API
 outage therefore does not discard the next sync cycle or prevent other stable
-notes from indexing.
+notes from indexing. Its reusable retry and lease logic lives in
+`packages/watcher-core`; a lock file prevents two watcher controllers from
+using the same state file. Inspect the current watcher state through
+`GET /v1/watcher/status`.
 
 Exports return the `pcs-context-export-v1` envelope alongside the rendered
 content. It reports included values and omitted counts by reason

@@ -80,7 +80,7 @@ test("watcher indexes stable Markdown files and archives deleted files", async (
   mkdirSync(notesDirectory, { recursive: true });
   writeFileSync(join(notesDirectory, "watched.md"), "# Watched\nstable content", "utf8");
   const port = 18950 + Math.floor(Math.random() * 200);
-  const environment = { ...process.env, PCS_PORT: String(port), PCS_DB: join(directory, "context.sqlite3"), PCS_NOTES_DIR: notesDirectory, PCS_API_URL: `http://127.0.0.1:${port}`, PCS_WATCH_INTERVAL_MS: "500" };
+  const environment = { ...process.env, PCS_PORT: String(port), PCS_DB: join(directory, "context.sqlite3"), PCS_NOTES_DIR: notesDirectory, PCS_API_URL: `http://127.0.0.1:${port}`, PCS_WATCH_INTERVAL_MS: "500", PCS_WATCH_STATE: join(directory, "watcher-state.json") };
   const apiProcess = spawn(process.execPath, ["--experimental-strip-types", "apps/api/src/server.ts"], { env: environment, stdio: "ignore" });
   let watcher: ReturnType<typeof spawn> | undefined;
   try {
@@ -93,6 +93,7 @@ test("watcher indexes stable Markdown files and archives deleted files", async (
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     assert.equal(items[0].file_path, "watched.md");
+    assert.equal((await (await fetch(`http://127.0.0.1:${port}/v1/watcher/status`)).json() as any).running, true);
     const originalId = items[0].id;
     renameSync(join(notesDirectory, "watched.md"), join(notesDirectory, "moved.md"));
     for (let attempt = 0; attempt < 30; attempt += 1) {

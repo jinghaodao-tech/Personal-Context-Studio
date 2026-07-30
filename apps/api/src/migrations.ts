@@ -58,6 +58,18 @@ export function applyMigrations(db: DatabaseSync, schemaSql: string) {
         CREATE TABLE IF NOT EXISTS context_restore_plans (id TEXT PRIMARY KEY, backup_id TEXT NOT NULL REFERENCES context_backups(id), confirmation_token TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN('planned','executed','cancelled')), created_at TEXT NOT NULL, executed_at TEXT) STRICT;
       `);
     } },
+    { version: "006_provenance", apply: () => db.exec(`
+      CREATE TABLE IF NOT EXISTS context_provenance (
+        id TEXT PRIMARY KEY,
+        subject_type TEXT NOT NULL CHECK(subject_type IN('document','entry','value','template','export','integration_import','backup')),
+        subject_id TEXT NOT NULL, event_type TEXT NOT NULL,
+        actor_type TEXT NOT NULL CHECK(actor_type IN('user','local_ai','integration','system')),
+        source_ref TEXT, source_content_hash TEXT, provider_id TEXT, model TEXT,
+        payload_hash TEXT, metadata_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS context_provenance_subject_idx ON context_provenance(subject_type,subject_id,created_at DESC);
+      CREATE INDEX IF NOT EXISTS context_provenance_source_idx ON context_provenance(source_ref,created_at DESC);
+    `) },
   ];
   const applied = new Set((db.prepare("SELECT version FROM schema_migrations").all() as Array<{ version: string }>).map((row) => row.version));
   for (const migration of migrations) {

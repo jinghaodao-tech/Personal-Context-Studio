@@ -26,6 +26,9 @@ test("review, purpose-limited sharing, export history, conflicts, reconfirmation
     assert.equal((await api("/v1/reviews/pending")).body.items[0].entry_id, first.body.id);
     assert.equal((await api(`/v1/context-entries/${first.body.id}/values/energy/review`, "POST", { decision: "accepted", reason: "Matches the note", reconfirmAfter: "2000-01-01T00:00:00.000Z" })).body.decision, "accepted");
     assert.equal((await api(`/v1/context-entries/${first.body.id}/values/energy/reviews`)).body.items[0].decision, "accepted");
+    const provenance = await api(`/v1/context-entries/${first.body.id}/provenance`);
+    assert.equal(provenance.body.items.some((item: any) => item.event_type === "candidate_extracted" && item.source_content_hash), true);
+    assert.equal(JSON.stringify(provenance.body.items).includes("I had focused energy"), false);
     assert.equal((await api("/v1/reconfirmations/due")).body.items.length, 1);
     const purpose = await api("/v1/sharing-purposes", "POST", { name: "work-planning", description: "Planning assistance" });
     assert.deepEqual((await api(`/v1/context-entries/${first.body.id}/values/energy/purposes`, "PUT", { purposeIds: [purpose.body.id] })).body.purposeIds, [purpose.body.id]);
