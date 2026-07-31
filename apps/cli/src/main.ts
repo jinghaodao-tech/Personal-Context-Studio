@@ -5,6 +5,7 @@ import { createLocalAiProvider } from "../../../packages/ai-core/src/index.ts";
 import { extractDocumentValues } from "../../../packages/entry-extraction/src/index.ts";
 import { readMarkdownSnapshot } from "../../../packages/documents/src/index.ts";
 import type { ContextTemplateField } from "../../../packages/domain/src/index.ts";
+import { createEditorAdapter, type EditorAdapterKind } from "../../../packages/integration-adapters/src/index.ts";
 
 const api = process.env.PCS_API_URL ?? "http://127.0.0.1:8300";
 const json = process.argv.includes("--json");
@@ -50,6 +51,7 @@ async function main() {
   if (command === "ai" && sub === "status") return print(await request("/v1/local-ai/status"));
   if (command === "ai" && sub === "start") return print(await request("/v1/local-ai/start", { method: "POST" }));
   if (command === "ai" && sub === "stop") return print(await request("/v1/local-ai/stop", { method: "POST" }));
+  if (command === "ops" && sub === "status") return print(await request("/v1/ops/status"));
   if (command === "privacy" && sub === "external-ai-consents") return print(await request("/v1/privacy/external-ai-consents"));
   if (command === "privacy" && sub === "grant-external-ai" && args[0] && args[1] && args[2] && args[3]) return print(await request("/v1/privacy/external-ai-consents", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ scope: args[0], providerId: args[1], destinationHost: args[2], ...(args[0] === "document" ? { documentId: args[3] } : { templateId: args[3], fieldKey: args[4] }) }) }));
   if (command === "privacy" && sub === "revoke-external-ai" && args[0]) return print(await request(`/v1/privacy/external-ai-consents/${encodeURIComponent(args[0])}/revoke`, { method: "POST" }));
@@ -74,6 +76,12 @@ async function main() {
   if (command === "integration" && sub === "template-requests") return print(await request("/v1/integration-template-requests"));
   if (command === "integration" && sub === "create-template" && args[0]) return print(await request(`/v1/integration-template-requests/${encodeURIComponent(args[0])}/create-template`, { method: "POST" }));
   if (command === "integration" && sub === "analysis-snapshot") return print(await request(`/v1/context/analysis-snapshot${args[0] ? `?${args[0]}` : ""}`));
+  if (command === "adapter" && sub === "context" && args[0] && args[1]) {
+    const kind = args[0] as EditorAdapterKind;
+    if (!["vscode", "cursor", "obsidian"].includes(kind)) throw new Error("adapter_kind_invalid");
+    const adapter = createEditorAdapter({ kind, baseUrl: api, clientId: process.env.PCS_CLIENT_ID ?? "", token: process.env.PCS_CLIENT_TOKEN ?? "", target: args[2] as any, detailLevel: (args[3] as any) ?? "standard" });
+    return print(await adapter.getContext(args[1]));
+  }
   throw new Error("usage: context-studio template|entry|profile|sharing|integration|export|backup ...");
 }
 main().catch((error) => { console.error(error instanceof Error ? error.message : error); process.exitCode = 1; });

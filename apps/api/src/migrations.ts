@@ -101,6 +101,39 @@ export function applyMigrations(db: DatabaseSync, schemaSql: string) {
       addColumn("integration_template_requests", "source_request_id", "TEXT NOT NULL DEFAULT ''");
       addColumn("integration_import_records", "source_import_id", "TEXT NOT NULL DEFAULT ''");
     } },
+    { version: "009_privacy_boundaries_and_template_versions", apply: () => {
+      const addColumn = (table: string, column: string, definition: string) => {
+        const columns = db.prepare("PRAGMA table_info(" + table + ")").all() as Array<{ name: string }>;
+        if (!columns.some((item) => item.name === column)) db.exec("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition);
+      };
+      addColumn("context_templates", "template_family_id", "TEXT");
+      addColumn("context_exports", "renderer_version", "TEXT NOT NULL DEFAULT 'pcs-renderer-v2'");
+      addColumn("context_exports", "detail_level", "TEXT NOT NULL DEFAULT 'standard'");
+      addColumn("context_conflicts", "resolution_json", "TEXT NOT NULL DEFAULT '{}'");
+      db.exec("CREATE TABLE IF NOT EXISTS integration_client_profiles (client_id TEXT NOT NULL REFERENCES integration_clients(id) ON DELETE CASCADE, profile_id TEXT NOT NULL REFERENCES context_profiles(id) ON DELETE CASCADE, created_at TEXT NOT NULL, PRIMARY KEY(client_id,profile_id)) STRICT; CREATE INDEX IF NOT EXISTS integration_client_profiles_profile_idx ON integration_client_profiles(profile_id,client_id); CREATE INDEX IF NOT EXISTS context_templates_family_version_idx ON context_templates(template_family_id,version); CREATE UNIQUE INDEX IF NOT EXISTS context_templates_active_family_idx ON context_templates(template_family_id) WHERE status='active' AND template_family_id IS NOT NULL; CREATE INDEX IF NOT EXISTS context_conflicts_status_idx ON context_conflicts(status,created_at DESC);");
+    } },
+    { version: "010_field_reconfirmation_policy", apply: () => {
+      const columns = db.prepare("PRAGMA table_info(context_template_fields)").all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === "reconfirmation_mode")) db.exec("ALTER TABLE context_template_fields ADD COLUMN reconfirmation_mode TEXT NOT NULL DEFAULT 'none'");
+      if (!columns.some((column) => column.name === "reconfirmation_interval_days")) db.exec("ALTER TABLE context_template_fields ADD COLUMN reconfirmation_interval_days INTEGER");
+    } },
+    { version: "011_encrypted_context_values", apply: () => {
+      const values = db.prepare("PRAGMA table_info(context_values)").all() as Array<{ name: string }>;
+      const revisions = db.prepare("PRAGMA table_info(context_value_revisions)").all() as Array<{ name: string }>;
+      if (!values.some((column) => column.name === "encrypted")) db.exec("ALTER TABLE context_values ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0");
+      if (!revisions.some((column) => column.name === "encrypted")) db.exec("ALTER TABLE context_value_revisions ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0");
+      db.exec("CREATE INDEX IF NOT EXISTS context_values_encrypted_idx ON context_values(encrypted,sensitivity)");
+      const backups = db.prepare("PRAGMA table_info(context_backups)").all() as Array<{ name: string }>;
+      if (!backups.some((column) => column.name === "encrypted")) db.exec("ALTER TABLE context_backups ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0");
+    } },
+    { version: "012_local_auth_sessions", apply: () => {
+      db.exec("CREATE TABLE IF NOT EXISTS auth_sessions (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, expires_at TEXT NOT NULL, created_at TEXT NOT NULL, revoked_at TEXT) STRICT; CREATE INDEX IF NOT EXISTS auth_sessions_active_idx ON auth_sessions(token_hash,expires_at) WHERE revoked_at IS NULL");
+    } },
+    { version: "013_profile_lifecycle", apply: () => {
+      const columns = db.prepare("PRAGMA table_info(context_profiles)").all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === "is_active")) db.exec("ALTER TABLE context_profiles ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN(0,1))");
+      db.exec("CREATE INDEX IF NOT EXISTS context_profiles_active_idx ON context_profiles(is_active,updated_at DESC)");
+    } },
   ];
   const applied = new Set((db.prepare("SELECT version FROM schema_migrations").all() as Array<{ version: string }>).map((row) => row.version));
   for (const migration of migrations) {

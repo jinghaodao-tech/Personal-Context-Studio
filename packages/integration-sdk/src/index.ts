@@ -45,3 +45,26 @@ export class PcsIntegrationClient {
     return payload;
   }
 }
+
+export type PcsManagementClientOptions = { baseUrl: string; adminToken?: string; fetchImplementation?: typeof fetch };
+export class PcsManagementClient {
+  private readonly baseUrl: string;
+  private readonly adminToken?: string;
+  private readonly fetchImplementation: typeof fetch;
+  constructor(options: PcsManagementClientOptions) {
+    this.baseUrl = localPcsUrl(options.baseUrl).toString().replace(/\/$/, "");
+    this.adminToken = options.adminToken;
+    this.fetchImplementation = options.fetchImplementation ?? fetch;
+  }
+  async searchDocuments(query: string) { return this.request("/v1/documents/search", { method: "POST", body: JSON.stringify({ query }) }); }
+  async getDocumentExcerpt(documentId: string, maxCharacters = 2000) { return this.request("/v1/documents/" + encodeURIComponent(documentId) + "/excerpt?maxCharacters=" + Math.min(8000, Math.max(200, maxCharacters))); }
+  async listPendingReviews() { return this.request("/v1/reviews/pending"); }
+  private async request(path: string, init: RequestInit = {}) {
+    const headers: Record<string, string> = { "content-type": "application/json", ...(init.headers as Record<string, string> ?? {}) };
+    if (this.adminToken) headers["x-pcs-admin-token"] = this.adminToken;
+    const response = await this.fetchImplementation(this.baseUrl + path, { ...init, headers });
+    const payload = await response.json() as unknown;
+    if (!response.ok) throw new Error(typeof payload === "object" && payload && "error" in payload ? String((payload as { error: unknown }).error) : "pcs_management_request_failed");
+    return payload;
+  }
+}

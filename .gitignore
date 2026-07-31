@@ -6,4 +6,5 @@ node_modules/
 *.sqlite-wal
 .env
 dist/
+*.vsix
 coverage/

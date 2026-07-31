@@ -4,23 +4,29 @@ import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 test("local API keeps imports pending and omits non-shareable context", async () => {
   const directory = mkdtempSync(join(tmpdir(), "pcs-api-"));
   const port = 18500 + Math.floor(Math.random() * 200);
-  const child = spawn(process.execPath, ["--experimental-strip-types", "apps/api/src/server.ts"], { env: { ...process.env, PCS_PORT: String(port), PCS_DB: join(directory, "context.sqlite3") }, stdio: "ignore" });
+  const databasePath = join(directory, "context.sqlite3");
+  const child = spawn(process.execPath, ["--experimental-strip-types", "apps/api/src/server.ts"], { env: { ...process.env, PCS_PORT: String(port), PCS_DB: databasePath, PCS_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64") }, stdio: "ignore" });
   const url = (path: string) => `http://127.0.0.1:${port}${path}`;
   try {
     for (let attempt = 0; attempt < 30; attempt += 1) { try { if ((await fetch(url("/health"))).ok) break; } catch { /* wait */ } await new Promise((resolve) => setTimeout(resolve, 75)); }
     const template = await fetch(url("/v1/context-templates"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Coding", purpose: "coding_ai", fields: [{ fieldKey: "editor", label: "Editor", valueType: "text", required: true, displayOrder: 1, sharingDefault: "always", sensitivity: "normal", reason: "Editor preference" }, { fieldKey: "health_note", label: "Health note", valueType: "text", required: false, displayOrder: 2, sharingDefault: "private", sensitivity: "sensitive", reason: "Private note" }] }) });
     assert.equal(template.status, 201); const templateId = (await template.json() as any).item.id;
     assert.equal((await fetch(url(`/v1/context-templates/${templateId}/activate`), { method: "POST" })).status, 200);
-    const entry = await fetch(url("/v1/context-entries"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ templateId, values: { editor: "VS Code", health_note: "private" } }) }); assert.equal(entry.status, 201);
+    const entry = await fetch(url("/v1/context-entries"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ templateId, values: { editor: "VS Code", health_note: "private" } }) }); assert.equal(entry.status, 201); const entryBody = await entry.json() as any;
+    const encryptedDb = new DatabaseSync(databasePath); const storedSensitive = encryptedDb.prepare("SELECT value_json,encrypted FROM context_values WHERE entry_id=? AND field_key='health_note'").get(entryBody.id) as any; encryptedDb.close(); assert.equal(storedSensitive.encrypted, 1); assert.doesNotMatch(storedSensitive.value_json, /private/);
+    const readableEntry = await fetch(url(`/v1/context-entries/${entryBody.id}`)); assert.equal((await readableEntry.json() as any).values.find((value: any) => value.field_key === "health_note").value_json, '"private"');
     const profile = await fetch(url("/v1/context-profiles"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Codex", target: "codex", includedFields: [{ templateId, fieldKey: "editor" }, { templateId, fieldKey: "health_note" }] }) }); const profileId = (await profile.json() as any).id;
     const preview = await fetch(url("/v1/context-exports/preview"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ profileId, format: "markdown" }) }); const previewBody = await preview.json() as any; assert.match(previewBody.content, /VS Code/); assert.doesNotMatch(previewBody.content, /private/); assert.equal(previewBody.schemaVersion, "pcs-context-export-v1"); assert.equal(previewBody.omitted.privateOrNever, 1);
     assert.equal((await fetch(url("/v1/integration-imports"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: "context_candidate_1", sourceSystem: "workbench", payload: {}, createdAt: "2026-01-08T00:00:00.000Z" }) })).status, 401);
     const client = await fetch(url("/v1/integration-clients"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Test workbench", permissions: ["submit_import"] }) }); const clientBody = await client.json() as any;
     const imported = await fetch(url("/v1/integration-imports"), { method: "POST", headers: { "content-type": "application/json", "x-pcs-client-id": clientBody.id, authorization: `Bearer ${clientBody.token}` }, body: JSON.stringify({ id: "context_candidate_1", sourceSystem: "workbench", sourceReferenceId: "candidate_1", payload: { statement: "Clear plans help me begin work." }, createdAt: "2026-01-08T00:00:00.000Z" }) }); assert.equal((await imported.json() as any).decision, "pending");
+    const firstAudit = await fetch(url("/v1/dashboard/audit?limit=1")); const firstAuditBody = await firstAudit.json() as any; assert.equal(firstAudit.status, 200); assert.equal(firstAuditBody.items.length, 1); assert.ok(firstAuditBody.nextCursor);
+    const nextAudit = await fetch(url(`/v1/dashboard/audit?limit=1&before=${encodeURIComponent(firstAuditBody.nextCursor)}`)); const nextAuditBody = await nextAudit.json() as any; assert.equal(nextAudit.status, 200); assert.equal(nextAuditBody.items.length, 1); assert.notEqual(nextAuditBody.items[0].id, firstAuditBody.items[0].id);
   } finally { child.kill(); await new Promise((resolve) => setTimeout(resolve, 100)); rmSync(directory, { recursive: true, force: true }); }
 });
 
@@ -39,7 +45,7 @@ test("local documents feed reviewed analysis snapshots and generic integration t
   try {
     for (let attempt = 0; attempt < 30; attempt += 1) { try { if ((await fetch(`http://127.0.0.1:${port}/health`)).ok) break; } catch { /* wait */ } await new Promise((resolve) => setTimeout(resolve, 75)); }
     const document = await api("/v1/documents", "POST", { filePath: "daily/2026-07-01.md" });
-    assert.equal(document.response.status, 201); assert.equal((await api("/v1/documents/search", "POST", { query: "energy" })).body.items.length, 1);
+    assert.equal(document.response.status, 201); assert.equal((await api("/v1/documents/search", "POST", { query: "energy" })).body.items.length, 1); const hybridSearch = await api("/v1/documents/search", "POST", { query: "energy", mode: "hybrid", limit: 10 }); assert.equal(hybridSearch.body.mode, "hybrid"); assert.equal(hybridSearch.body.items.length, 1);
     const storedDocument = await api(`/v1/documents/${document.body.id}`);
     assert.equal("body" in storedDocument.body.item, false);
     assert.match((await api(`/v1/documents/${document.body.id}/excerpt?maxCharacters=200`)).body.excerpt, /energy/);

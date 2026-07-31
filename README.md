@@ -132,6 +132,20 @@ npm.cmd run cli -- backup restore <backup-id> <plan-id> "RESTORE <backup-id>"
 Backups contain the local PCS database. Keep the backup directory on storage
 with the same privacy protections as the primary database.
 
+For operations, `ops status` reports the latest migration, encryption
+configuration, and watcher state without exposing note contents. `backup list`
+also reports whether each backup file is present and its recorded hash still
+matches. Backup deletion is intentionally not automatic.
+
+```powershell
+npm.cmd run cli -- ops status --json
+npm.cmd run cli -- backup list --json
+npm.cmd run ops:diagnostics
+```
+
+See [`docs/operations.md`](docs/operations.md) for logging, Supervisor state,
+startup configuration, and recovery procedures.
+
 ## Read-only MCP
 
 Start the MCP server over stdio with:
@@ -236,6 +250,8 @@ requests. The CLI forwards this environment variable automatically. When this
 mode is enabled, the local dashboard asks for the token once per browser
 session and keeps it only in browser session storage. Do not put this token in
 notes, SQLite exports, source control, or external AI prompts.
+Set `PCS_REQUIRE_AUTH=1` in unattended or shared local environments to refuse
+startup unless a sufficiently long admin token is configured.
 
 Integration clients use a separate client ID and Bearer token with only
 `read_snapshot`, `submit_template_request`, or `submit_import`. Their tokens
@@ -269,6 +285,31 @@ so contract drift between the client and integration routes is detected.
 The API rejects secret-like strings such as API keys and passwords. Safe delete
 requires a generated confirmation token and writes a local audit record.
 
+## Scoped integration and preview safety
+
+Integration clients have explicit read_snapshot, submit_template_request, and
+submit_import permissions. A client may be restricted to selected Profile IDs;
+a request for another profile receives integration_profile_forbidden. Tokens are
+returned only when a client is created and are stored by PCS only as hashes.
+Management credentials do not authorize Integration API calls.
+
+Profile export and Integration snapshots use the same disclosure decision.
+Unconfirmed, retracted, private, never, highly sensitive, purpose-disallowed,
+invalid, and secret-like values are omitted with a reason manifest. Export
+previews include a fingerprint, renderer version, and detail level; an export
+can supply that fingerprint to reject stale previews.
+
+Each template field can also specify a reconfirmation policy. `default` with
+an interval schedules the next review after an accepted value, while `none`
+keeps the value available until the user changes or retracts it. Resolving a
+conflict retains an append-only resolution record and retracts values that the
+user did not keep, so they cannot silently flow into later exports.
+
+The read-only MCP server uses the Integration SDK. PCS_CLIENT_ID and
+PCS_CLIENT_TOKEN expose the profile-scoped snapshot tool. PCS_ADMIN_TOKEN
+separately exposes document search and pending-review tools. With neither
+credential, no MCP tools are exposed.
+
 ## Operational behavior
 
 The watcher isolates failures per Markdown file, retries only the failed item
@@ -291,3 +332,33 @@ Run the complete local verification suite with:
 ```powershell
 npm.cmd run verify
 ```
+
+CI performs a clean dependency install and then runs `npm run verify:ci` on
+pull requests and updates to `main`.
+
+Set `PCS_ENCRYPTION_KEY` to a 32-byte base64 value or 64-character hex value
+to encrypt sensitive context values and backup files with AES-256-GCM. The key
+is never stored in SQLite or returned by the API; losing it makes encrypted
+values unrecoverable. Without the key, `highly_sensitive` values are rejected.
+To migrate existing sensitive plaintext and rotate an encryption key, set
+`PCS_OLD_ENCRYPTION_KEY` and the new `PCS_ENCRYPTION_KEY`, then run
+`npm.cmd run crypto:rekey`. The command updates encrypted backups as well and
+prints counts only.
+
+For a resident local process, run `npm.cmd run dev:supervisor`. It supervises
+the API and Markdown watcher independently and restarts either child after a
+failure, including the API exit used by backup restoration. Editor adapters can
+read a scoped snapshot with `npm.cmd run adapter -- context vscode <profileId>`
+or the equivalent `cursor` and `obsidian` kind, using `PCS_CLIENT_ID` and
+`PCS_CLIENT_TOKEN`.
+
+Document search accepts `mode: "lexical"` or `mode: "hybrid"`; hybrid combines
+SQLite FTS ranking with recorded-date filtering and returns both scores. A
+management token can be exchanged through `POST /v1/auth/session` for an
+8-hour local session header. Revoke it with `POST /v1/auth/session/revoke`.
+
+On Windows, install the logon task with
+`scripts/install-pcs-autostart.ps1` and remove it with
+`scripts/uninstall-pcs-autostart.ps1`. The VS Code/Cursor package is under
+`integrations/vscode`, the read-only Obsidian plugin under
+`integrations/obsidian`, and the local Electron shell under `apps/desktop`.

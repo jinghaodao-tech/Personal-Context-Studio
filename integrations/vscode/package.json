@@ -1,0 +1,22 @@
+{
+  "name": "personal-context-studio-context",
+  "displayName": "Personal Context Studio Context",
+  "description": "Read a scoped PCS context snapshot in VS Code or Cursor.",
+  "version": "0.1.0",
+  "publisher": "personal-context-studio",
+  "repository": { "type": "git", "url": "https://github.com/jinghaodao-tech/Personal-Context-Studio" },
+  "engines": { "vscode": ">=1.85.0" },
+  "activationEvents": ["onCommand:pcs.loadContext"],
+  "main": "./dist/extension.js",
+  "contributes": { "commands": [{ "command": "pcs.loadContext", "title": "PCS: Load Scoped Context" }] },
+  "scripts": {
+    "compile": "tsc -p tsconfig.json",
+    "package": "npm run compile && npx @vscode/vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.6.0",
+    "typescript": "^5.8.3"
+  }
+}
