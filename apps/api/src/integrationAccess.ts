@@ -45,7 +45,7 @@ export function integrationAuthorization(db: DatabaseSync, request: IncomingMess
   if (profileId) {
     const scoped = db.prepare("SELECT 1 FROM integration_client_profiles WHERE client_id=? AND profile_id=?").get(clientId, profileId);
     const hasAnyScope = db.prepare("SELECT 1 FROM integration_client_profiles WHERE client_id=? LIMIT 1").get(clientId);
-    if (hasAnyScope && !scoped) return { ok: false, status: 403, error: "integration_profile_forbidden" };
+    if (!scoped) return { ok: false, status: 403, error: hasAnyScope ? "integration_profile_forbidden" : "integration_profile_scope_required" };
   }
   return { ok: true, status: 200, error: "" };
 }

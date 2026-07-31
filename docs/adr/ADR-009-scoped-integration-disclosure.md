@@ -2,8 +2,10 @@
 
 PCS keeps management access separate from Integration API access. Integration
 clients authenticate with a one-time token that is stored only as a SHA-256
-hash and receive explicit permissions. Clients may be limited to specific
-Context Profiles; a scope mismatch returns integration_profile_forbidden.
+hash and receive explicit permissions. A read_snapshot client must have an
+explicit Context Profile scope; an empty scope returns
+integration_profile_scope_required. A different scoped profile returns
+integration_profile_forbidden.
 
 Both Profile export and Integration snapshots use the same disclosure decision.
 Unconfirmed, retracted, private, never, highly sensitive, purpose-disallowed,

@@ -288,8 +288,10 @@ requires a generated confirmation token and writes a local audit record.
 ## Scoped integration and preview safety
 
 Integration clients have explicit read_snapshot, submit_template_request, and
-submit_import permissions. A client may be restricted to selected Profile IDs;
-a request for another profile receives integration_profile_forbidden. Tokens are
+submit_import permissions. A `read_snapshot` client must have an explicit
+Profile ID scope; an unscoped request receives
+`integration_profile_scope_required`, while a different scoped profile receives
+`integration_profile_forbidden`. Tokens are
 returned only when a client is created and are stored by PCS only as hashes.
 Management credentials do not authorize Integration API calls.
 
