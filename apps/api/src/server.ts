@@ -1,7 +1,9 @@
 import { server, shutdown } from "./app.ts";
+import { createLogger, readRuntimeConfig } from "../../../packages/runtime-ops/src/index.ts";
 
-const port = Number(process.env.PCS_PORT ?? 8300);
-server.listen(port, "127.0.0.1", () => console.log(`Personal Context Studio listening on http://127.0.0.1:${port}`));
+const config = readRuntimeConfig();
+const logger = createLogger({ service: "pcs-api", file: process.env.PCS_LOG_FILE, maxBytes: Number(process.env.PCS_LOG_MAX_BYTES ?? 5 * 1024 * 1024) });
+server.listen(config.port, "127.0.0.1", () => logger.info("API listening", { port: config.port, authRequired: config.authRequired }));
 let closing = false;
 async function close() {
   if (closing) return;

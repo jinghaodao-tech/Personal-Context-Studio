@@ -8,10 +8,11 @@
 - Review decisions are per field and show source excerpt/staleness.
 - Sharing Preview shows target, included count, omission reasons, estimated tokens, and fingerprint.
 - Privacy and Backup are visible tabs rather than hidden maintenance commands.
+- Dashboard is served as a readable Japanese UTF-8 page with semantic navigation and accessible dialogs.
+- Entry fields use type-specific controls for boolean, numeric, choice, text, and JSON values.
+- Revision history shows before/after values as a visual diff.
 
-## Follow-up
+## Future polish
 
-- Split the large dashboard HTML into a browser bundle when a frontend build is introduced.
-- Add keyboard navigation and screen-reader labels to all dynamic dialogs.
-- Add a field editor with type-specific controls instead of JSON text input.
-- Add a visual diff for Template Version and Revision changes.
+- Split the dashboard into a separately bundled frontend when a dedicated frontend build is justified.
+- Add richer visual diffs for complete Template Version objects.

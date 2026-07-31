@@ -44,22 +44,30 @@ export function renderTarget(fields: RenderField[], target: ExportTarget): strin
   return `# Personal Context\n\n${lines.join("\n")}`;
 }
 
+export type DetailLevel = "short" | "standard" | "detailed";
+export function renderTargetWithDetail(fields: RenderField[], target: ExportTarget, detailLevel: DetailLevel = "standard"): string {
+  if (target === "json") return JSON.stringify({ schemaVersion: "pcs-context-snapshot-v2", detailLevel, values: Object.fromEntries(fields.map((item) => [item.fieldKey ?? item.label, item.value])) }, null, 2);
+  const body = renderTarget(fields, target);
+  if (detailLevel === "standard") return body;
+  return "Detail level: " + detailLevel + ". Use this user-confirmed context only for the selected purpose.\\n\\n" + body;
+}
+
 function withinLimit(value: string, maximumCharacters: number | undefined, maximumTokens: number | undefined): boolean {
   return (maximumCharacters === undefined || value.length <= maximumCharacters) && (maximumTokens === undefined || estimateTokens(value) <= maximumTokens);
 }
 
-export function truncateRenderedTarget(fields: RenderField[], target: ExportTarget, maximumCharacters?: number, maximumTokens?: number): { content: string; truncated: boolean; includedFields: number } {
+export function truncateRenderedTarget(fields: RenderField[], target: ExportTarget, maximumCharacters?: number, maximumTokens?: number, detailLevel: DetailLevel = "standard"): { content: string; truncated: boolean; includedFields: number } {
   const hasCharacterLimit = Number.isInteger(maximumCharacters) && (maximumCharacters as number) > 0;
   const hasTokenLimit = Number.isInteger(maximumTokens) && (maximumTokens as number) > 0;
-  if (!hasCharacterLimit && !hasTokenLimit) return { content: renderTarget(fields, target), truncated: false, includedFields: fields.length };
+  if (!hasCharacterLimit && !hasTokenLimit) return { content: renderTargetWithDetail(fields, target, detailLevel), truncated: false, includedFields: fields.length };
   const characterLimit = hasCharacterLimit ? maximumCharacters : undefined;
   const tokenLimit = hasTokenLimit ? maximumTokens : undefined;
-  const complete = renderTarget(fields, target);
+  const complete = renderTargetWithDetail(fields, target, detailLevel);
   if (withinLimit(complete, characterLimit, tokenLimit)) return { content: complete, truncated: false, includedFields: fields.length };
   if (target === "json") {
     let included = 0;
     for (let count = fields.length; count >= 0; count -= 1) {
-      const candidate = renderTarget(fields.slice(0, count), target);
+      const candidate = renderTargetWithDetail(fields.slice(0, count), target, detailLevel);
       if (withinLimit(candidate, characterLimit, tokenLimit)) { included = count; return { content: candidate, truncated: true, includedFields: included }; }
     }
     return { content: "{}", truncated: true, includedFields: 0 };

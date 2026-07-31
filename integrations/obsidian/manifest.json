@@ -1,0 +1,9 @@
+{
+  "id": "personal-context-studio",
+  "name": "Personal Context Studio",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "Read a selected PCS context profile without write access.",
+  "author": "Personal Context Studio",
+  "isDesktopOnly": true
+}

@@ -1,0 +1,28 @@
+{
+  "name": "personal-context-studio-desktop",
+  "version": "0.1.0",
+  "description": "Local-first Personal Context Studio desktop shell.",
+  "author": "Personal Context Studio",
+  "main": "src/main.cjs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "electron src/main.cjs",
+    "dist": "electron-builder"
+  },
+  "build": {
+    "appId": "com.personalcontextstudio.app",
+    "productName": "Personal Context Studio",
+    "asar": true,
+    "files": ["src/**/*", "package.json"],
+    "directories": { "output": "dist" },
+    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }] },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true },
+    "mac": { "target": ["dmg"] },
+    "linux": { "target": ["AppImage"] }
+  },
+  "devDependencies": {
+    "electron": "^43.2.0",
+    "electron-builder": "^26.0.12"
+  }
+}

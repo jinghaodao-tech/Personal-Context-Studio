@@ -1,0 +1,14 @@
+[Unit]
+Description=Personal Context Studio supervisor
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Personal-Context-Studio
+ExecStart=/usr/bin/env npm run dev:supervisor
+Restart=on-failure
+RestartSec=5
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=default.target

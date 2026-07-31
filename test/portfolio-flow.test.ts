@@ -29,7 +29,8 @@ test("browser portfolio APIs keep template versions immutable and export preview
     const profile = await api("/v1/context-profiles", "POST", { name: "Agents profile", target: "agents_md", maximumCharacters: 120, maximumTokens: 30, includedFields: [{ templateId, fieldKey: "summary" }] });
     const preview = await api("/v1/context-exports/preview", "POST", { profileId: profile.body.id });
     assert.equal(preview.body.target, "agents_md"); assert.equal(preview.body.format, "agents"); assert.equal(preview.body.content.length <= 120, true); assert.equal(preview.body.estimatedTokens <= 30, true); assert.match(preview.body.previewFingerprint, /^[a-f0-9]{64}$/);
-    const exported = await api("/v1/context-exports", "POST", { profileId: profile.body.id, target: "agents_md", destination: "local-test" });
+    assert.equal((await api("/v1/context-exports", "POST", { profileId: profile.body.id, target: "agents_md", destination: "local-test" })).response.status, 409);
+    const exported = await api("/v1/context-exports", "POST", { profileId: profile.body.id, target: "agents_md", destination: "local-test", previewFingerprint: preview.body.previewFingerprint });
     assert.equal(exported.response.status, 201); assert.equal((await api("/v1/context-exports")).body.items[0].target, "agents_md");
     const secret = await api("/v1/context-entries", "POST", { templateId, values: { summary: { nested_api_key: "ghp_12345678901234567890" } } });
     assert.equal(secret.response.status, 400); assert.equal(secret.body.error, "secret_value_prohibited");

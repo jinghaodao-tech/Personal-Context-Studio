@@ -1,9 +1,10 @@
-name: Verify PCS
+name: Verify
 
 on:
-  push:
-    branches: [main]
   pull_request:
+  push:
+    branches:
+      - main
 
 jobs:
   verify:
@@ -15,4 +16,5 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run verify
+      - run: npx playwright install chromium
+      - run: npm run verify:ci
