@@ -364,3 +364,17 @@ On Windows, install the logon task with
 `scripts/uninstall-pcs-autostart.ps1`. The VS Code/Cursor package is under
 `integrations/vscode`, the read-only Obsidian plugin under
 `integrations/obsidian`, and the local Electron shell under `apps/desktop`.
+
+## Analysis metadata and export detail
+
+Choice fields may declare `positiveValueKeys`, `orderedValueKeys`, or
+`numericMapping`. These semantics are stored with the template field and are
+included in the V2.1 analysis snapshot; consumers must not infer success from
+labels such as `started` or `completed`. Existing templates receive empty
+semantics through migration `014_analysis_choice_semantics`.
+
+Profile exports now make `short`, `standard`, and `detailed` materially
+different. Detailed output includes purpose, recorded time, provenance,
+confirmation and review state, reconfirmation deadline, lifecycle, and
+limitations. Reconfirmation updates the current value's timestamps, while
+conflict resolution must remain explicit and auditable.

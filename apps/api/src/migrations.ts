@@ -134,6 +134,12 @@ export function applyMigrations(db: DatabaseSync, schemaSql: string) {
       if (!columns.some((column) => column.name === "is_active")) db.exec("ALTER TABLE context_profiles ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN(0,1))");
       db.exec("CREATE INDEX IF NOT EXISTS context_profiles_active_idx ON context_profiles(is_active,updated_at DESC)");
     } },
+    { version: "014_analysis_choice_semantics", apply: () => {
+      const addColumn = (column: string, definition: string) => { const columns = db.prepare("PRAGMA table_info(context_template_fields)").all() as Array<{ name: string }>; if (!columns.some((item) => item.name === column)) db.exec(`ALTER TABLE context_template_fields ADD COLUMN ${column} ${definition}`); };
+      addColumn("positive_value_keys_json", "TEXT NOT NULL DEFAULT '[]'");
+      addColumn("ordered_value_keys_json", "TEXT NOT NULL DEFAULT '[]'");
+      addColumn("numeric_mapping_json", "TEXT NOT NULL DEFAULT '{}'");
+    } },
   ];
   const applied = new Set((db.prepare("SELECT version FROM schema_migrations").all() as Array<{ version: string }>).map((row) => row.version));
   for (const migration of migrations) {
