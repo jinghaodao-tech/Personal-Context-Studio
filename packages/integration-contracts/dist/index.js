@@ -6,11 +6,18 @@ const keyPattern = /^[a-z][a-z0-9_]{0,63}$/;
 const maxJsonBytes = 200_000;
 function isRecord(value) { return Boolean(value) && typeof value === "object" && !Array.isArray(value); }
 function validTimestamp(value) { return typeof value === "string" && !Number.isNaN(Date.parse(value)); }
+function validTimezone(value) { if (typeof value !== "string" || !value)
+    return false; try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format();
+    return true;
+}
+catch {
+    return false;
+} }
 function validSourceSystem(value) { return typeof value === "string" && /^[a-z][a-z0-9_-]{0,63}$/.test(value); }
 const analysisValueKeys = new Set(["fieldKey", "label", "valueType", "value", "templateId", "templateVersionId", "analysisRole", "analysisRoleConfirmed", "analysisUsage", "analysisMergeAllowed", "scaleFingerprint", "unit", "minimum", "maximum", "allowedValues", "positiveValueKeys", "orderedValueKeys", "numericMapping", "provenance"]);
-const analysisValueTypes = new Set(["boolean", "single_choice", "number", "integer", "scale", "duration_minutes"]);
 function validateAnalysisValue(value) {
-    if (!isRecord(value) || [...Object.keys(value)].some((key) => !analysisValueKeys.has(key)) || typeof value.fieldKey !== "string" || !keyPattern.test(value.fieldKey) || typeof value.label !== "string" || typeof value.templateId !== "string" || typeof value.templateVersionId !== "string" || typeof value.analysisRole !== "string" || value.analysisRoleConfirmed !== true || !["condition", "outcome", "both", "excluded"].includes(String(value.analysisUsage)) || typeof value.analysisMergeAllowed !== "boolean" || typeof value.scaleFingerprint !== "string" || !analysisValueTypes.has(String(value.valueType)))
+    if (!isRecord(value) || Object.keys(value).some((key) => !analysisValueKeys.has(key)) || typeof value.fieldKey !== "string" || !keyPattern.test(value.fieldKey) || typeof value.label !== "string" || typeof value.templateId !== "string" || typeof value.templateVersionId !== "string" || typeof value.analysisRole !== "string" || value.analysisRoleConfirmed !== true || !["condition", "outcome", "both", "excluded"].includes(String(value.analysisUsage)) || typeof value.analysisMergeAllowed !== "boolean" || typeof value.scaleFingerprint !== "string" || !analysisValueTypes.has(String(value.valueType)))
         throw new Error("context_analysis_value_invalid");
     const type = String(value.valueType);
     const validValue = type === "boolean" ? typeof value.value === "boolean" : type === "single_choice" ? typeof value.value === "string" : typeof value.value === "number" && Number.isFinite(value.value) && (type !== "integer" || Number.isInteger(value.value));
@@ -18,7 +25,13 @@ function validateAnalysisValue(value) {
         throw new Error("context_analysis_value_invalid");
     if ((value.minimum !== undefined && (typeof value.minimum !== "number" || !Number.isFinite(value.minimum))) || (value.maximum !== undefined && (typeof value.maximum !== "number" || !Number.isFinite(value.maximum))) || (value.minimum !== undefined && value.maximum !== undefined && value.minimum > value.maximum))
         throw new Error("context_analysis_value_range_invalid");
-    if (value.allowedValues !== undefined && (!Array.isArray(value.allowedValues) || new Set(value.allowedValues.map((item) => item.key)).size !== value.allowedValues.length || value.allowedValues.some((item) => !isRecord(item) || typeof item.key !== "string" || typeof item.label !== "string")))
+    const minimum = typeof value.minimum === "number" ? value.minimum : undefined;
+    const maximum = typeof value.maximum === "number" ? value.maximum : undefined;
+    if (typeof value.value === "number" && ((minimum !== undefined && value.value < minimum) || (maximum !== undefined && value.value > maximum)))
+        throw new Error("context_analysis_value_out_of_range");
+    if (type === "single_choice" && (!Array.isArray(value.allowedValues) || !value.allowedValues.some((item) => isRecord(item) && item.key === value.value)))
+        throw new Error("context_analysis_choice_invalid");
+    if (value.allowedValues !== undefined && (!Array.isArray(value.allowedValues) || new Set(value.allowedValues.map((item) => isRecord(item) ? item.key : "")).size !== value.allowedValues.length || value.allowedValues.some((item) => !isRecord(item) || typeof item.key !== "string" || typeof item.label !== "string")))
         throw new Error("context_analysis_value_choices_invalid");
     const keys = new Set((Array.isArray(value.allowedValues) ? value.allowedValues : []).map((item) => isRecord(item) ? String(item.key) : ""));
     for (const name of ["positiveValueKeys", "orderedValueKeys"])
@@ -30,6 +43,7 @@ function validateAnalysisValue(value) {
         throw new Error("context_analysis_value_provenance_invalid");
     return value;
 }
+const analysisValueTypes = new Set(["boolean", "single_choice", "number", "integer", "scale", "duration_minutes"]);
 export function validateContextAnalysisSnapshot(value) {
     if (!isRecord(value) || !validTimestamp(value.generatedAt))
         throw new Error("context_analysis_snapshot_invalid");
@@ -43,12 +57,12 @@ export function validateContextAnalysisSnapshot(value) {
         }
         return value;
     }
-    if (value.schemaVersion === CONTEXT_ANALYSIS_SNAPSHOT_V2_VERSION && value.contractRevision === PCS_ANALYSIS_CONTRACT_REVISION && typeof value.snapshotId === "string" && typeof value.profileId === "string" && isRecord(value.period) && validTimestamp(value.period.startAt) && validTimestamp(value.period.endAt) && typeof value.period.timezone === "string" && Array.isArray(value.records) && isRecord(value.excluded)) {
+    if (value.schemaVersion === CONTEXT_ANALYSIS_SNAPSHOT_V2_VERSION && value.contractRevision === PCS_ANALYSIS_CONTRACT_REVISION && typeof value.snapshotId === "string" && typeof value.profileId === "string" && isRecord(value.period) && validTimestamp(value.period.startAt) && validTimestamp(value.period.endAt) && validTimezone(value.period.timezone) && Array.isArray(value.records) && isRecord(value.excluded)) {
         if (JSON.stringify(value).length > maxJsonBytes)
             throw new Error("context_analysis_snapshot_too_large");
-        for (const record of value.records)
-            if (!isRecord(record) || typeof record.id !== "string" || !validTimestamp(record.recordedAt) || !Array.isArray(record.values) || record.values.some((item) => { validateAnalysisValue(item); return false; }))
-                throw new Error("context_analysis_snapshot_invalid");
+        const excludedValid = Object.values(value.excluded).every((item) => typeof item === "number" && Number.isInteger(item) && item >= 0);
+        if (JSON.stringify(value).length > maxJsonBytes || Date.parse(value.period.startAt) >= Date.parse(value.period.endAt) || !excludedValid)
+            throw new Error("context_analysis_snapshot_invalid");
         return value;
     }
     throw new Error("context_analysis_snapshot_invalid");
