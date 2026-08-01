@@ -2,6 +2,12 @@
 
 The current product contract is [docs/current-product-spec.md](docs/current-product-spec.md). Architecture decisions are recorded in [docs/adr](docs/adr) and the main usability notes are in [docs/usability-findings.md](docs/usability-findings.md).
 
+
+## Portfolio Summary
+
+Personal Context Studio is the local-first governance layer for personal context. It keeps Markdown as the human-readable source of truth, turns notes into user-confirmed structured values, and controls revision history, applicability, purpose-limited sharing, privacy filtering, backups, and safe deletion before any external tool receives a snapshot. MeTheory and other clients receive only the scoped, validated Integration API contract; they do not access the PCS database directly.
+
+The current implementation includes SQLite migrations, append-only revisions, value-level Review, provenance, staleness and reconfirmation checks, management and Integration API separation, read-only MCP, local API/CLI surfaces, and automated verification. Cloud sync, remote AI execution, and bidirectional editor synchronization are outside the current product boundary.
 Personal Context Studio is a separate, local-first SQLite application for
 user-confirmed context that may be shared with AI tools. Markdown files are the
 canonical human record and can be edited with VS Code, Cursor, Obsidian, or any
