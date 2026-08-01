@@ -20,7 +20,7 @@ test("review, purpose-limited sharing, export history, conflicts, reconfirmation
   try {
     for (let attempt = 0; attempt < 40; attempt += 1) { try { if ((await fetch(`http://127.0.0.1:${port}/health`)).ok) break; } catch { /* wait */ } await new Promise((resolve) => setTimeout(resolve, 75)); }
     const document = await api("/v1/documents", "POST", { filePath: "work.md" });
-    const template = await api("/v1/context-templates", "POST", { name: "Focus", purpose: "work", fields: [{ fieldKey: "energy", label: "Energy", valueType: "number", required: true, displayOrder: 1, sharingDefault: "purpose_only", sensitivity: "normal", reason: "Review energy" }] });
+    const template = await api("/v1/context-templates", "POST", { name: "Focus", purpose: "work", fields: [{ fieldKey: "energy", label: "Energy", valueType: "number", required: true, displayOrder: 1, sharingDefault: "purpose_only", sensitivity: "normal", analysisRole: "energy_level", analysisRoleConfirmed: true, analysisUsage: "outcome", analysisMergeAllowed: true, reason: "Review energy" }] });
     await api(`/v1/context-templates/${template.body.item.id}/activate`, "POST");
     const first = await api("/v1/context-entries/candidates", "POST", { templateId: template.body.item.id, sourceDocumentId: document.body.id, provider: "local", values: { energy: 4 } });
     assert.equal((await api("/v1/reviews/pending")).body.items[0].entry_id, first.body.id);
@@ -66,10 +66,19 @@ test("review, purpose-limited sharing, export history, conflicts, reconfirmation
     const bothConflict = (await api("/v1/context-conflicts")).body.items.find((item: any) => item.status === "unresolved");
     assert.ok(bothConflict);
     const bothValueIds = JSON.parse(bothConflict.value_ids_json) as string[];
+    await api(`/v1/context-entries/${fifth.body.id}/values/energy/purposes`, "PUT", { purposeIds: [purpose.body.id] });
+    await api(`/v1/context-entries/${sixth.body.id}/values/energy/purposes`, "PUT", { purposeIds: [purpose.body.id] });
     const applicabilityItems = bothValueIds.map((valueId: string, index: number) => ({ valueId, applicabilityCondition: `context_${index}`, validFrom: `2026-08-${String(index + 1).padStart(2, "0")}T00:00:00.000Z`, validTo: `2026-09-${String(index + 1).padStart(2, "0")}T00:00:00.000Z` }));
     const bothResolution = await api(`/v1/context-conflicts/${bothConflict.id}/resolve`, "POST", { status: "keep_both", selectedValueIds: bothValueIds, applicabilityItems, reason: "Both values apply in different contexts" });
     assert.equal(bothResolution.response.status, 200);
     assert.equal(bothResolution.body.resolution.applicabilityItems.length, bothValueIds.length);
+    const detailedPreview = await api("/v1/context-exports/preview", "POST", { profileId: profile.body.id, format: "markdown", target: "agents_md", destination: "local test" });
+    assert.match(detailedPreview.body.content, /applicability=/);
+    const applicabilityClient = await api("/v1/integration-clients", "POST", { name: "Applicability snapshot", permissions: ["read_snapshot"], allowedProfileIds: [profile.body.id] });
+    const applicabilityResponse = await fetch(`http://127.0.0.1:${port}/v1/context/analysis-snapshot?profileId=${profile.body.id}`, { headers: { "x-pcs-client-id": applicabilityClient.body.id, authorization: `Bearer ${applicabilityClient.body.token}` } });
+    const applicabilitySnapshot = await applicabilityResponse.json() as any;
+    const snapshotValues = applicabilitySnapshot.records.flatMap((record: any) => record.values);
+    assert.ok(snapshotValues.some((value: any) => Array.isArray(value.applicability) && value.applicability.length > 0), JSON.stringify({ status: applicabilityResponse.status, body: applicabilitySnapshot }));
     const rejected = await api("/v1/context-entries/candidates", "POST", { templateId: template.body.item.id, sourceDocumentId: document.body.id, provider: "local", values: { energy: 1 } });
     await api(`/v1/context-entries/${rejected.body.id}/values/energy/review`, "POST", { decision: "rejected", reason: "Not supported" });
     assert.equal((await api("/v1/reviews/pending")).body.items.some((item: any) => item.entry_id === rejected.body.id), false);

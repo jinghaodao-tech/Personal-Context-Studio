@@ -118,4 +118,7 @@ test("rejects malformed V2 records, duplicate fields, applicability and unknown 
   assert.throws(() => validateContextAnalysisSnapshot({ ...base, extra: true }), /snapshot_invalid/);
   assert.throws(() => validateContextAnalysisSnapshot({ ...base, records: [{ ...base.records[0], values: [baseValue, baseValue] }] }), /duplicate_field/);
   assert.throws(() => validateContextAnalysisSnapshot({ ...base, records: [{ ...base.records[0], values: [{ ...baseValue, applicability: [{ condition: "workday", validFrom: "2026-08-02T00:00:00.000Z", validTo: "2026-08-01T00:00:00.000Z" }] }] }] }), /applicability_invalid/);
+  assert.equal((validateContextAnalysisSnapshot({ ...base, records: [{ ...base.records[0], values: [{ ...baseValue, applicability: [] }] }] }) as any).records[0].values[0].applicability?.length, 0);
+  assert.throws(() => validateContextAnalysisSnapshot({ ...base, records: [{ ...base.records[0], values: [{ ...baseValue, applicability: [{ condition: null, validFrom: null, validTo: null }] }] }] }), /applicability_invalid/);
+  assert.throws(() => validateContextAnalysisSnapshot({ ...base, records: [{ ...base.records[0], values: [{ ...baseValue, applicability: [{ condition: "workday", validFrom: null, validTo: null }, { condition: " WORKDAY ", validFrom: null, validTo: null }] }] }] }), /applicability_duplicate/);
 });

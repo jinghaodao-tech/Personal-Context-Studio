@@ -213,6 +213,15 @@ function analysisSnapshot(startAt?: string, endAt?: string) {
 }
 
 
+function periodsIntersect(applicability: { validFrom: string | null; validTo: string | null }[], startAt: string, endAt: string): boolean {
+  const start = Date.parse(startAt);
+  const end = Date.parse(endAt);
+  return applicability.some((item) => {
+    const from = item.validFrom ? Date.parse(item.validFrom) : Number.NEGATIVE_INFINITY;
+    const to = item.validTo ? Date.parse(item.validTo) : Number.POSITIVE_INFINITY;
+    return from < end && to > start;
+  });
+}
 function analysisSnapshotV2(profileId: string, startAt?: string, endAt?: string, timezone = "UTC") {
   const profile = db.prepare("SELECT id,purpose_id FROM context_profiles WHERE id=? AND is_active=1").get(profileId) as { id: string; purpose_id: string | null } | undefined;
   if (!profile) throw new Error("pcs_profile_not_found");
@@ -222,7 +231,7 @@ function analysisSnapshotV2(profileId: string, startAt?: string, endAt?: string,
   const upper = validTimestamp(endAt) ? endAt! : new Date().toISOString();
   const rows = db.prepare("SELECT e.id AS entry_id,e.template_id,e.template_version,v.id AS value_id,v.field_key,v.value_json,v.source,v.source_id,v.user_confirmed,v.sharing,v.sensitivity,v.lifecycle_state,v.recorded_at,f.label,f.value_type,f.options_json,f.minimum_value,f.maximum_value,f.unit,f.analysis_role,f.analysis_role_confirmed,f.analysis_usage,f.analysis_merge_allowed,f.positive_value_keys_json,f.ordered_value_keys_json,f.numeric_mapping_json FROM context_entries e JOIN context_values v ON v.entry_id=e.id JOIN context_template_fields f ON f.template_id=e.template_id AND f.field_key=v.field_key WHERE e.status='active' AND v.recorded_at>=? AND v.recorded_at<=? ORDER BY v.recorded_at,e.id").all(lower, upper) as any[];
   const records = new Map<string, { id: string; recordedAt: string; title?: string; sourceDocumentId: string | null; values: any[] }>();
-  const excluded = { unconfirmed: 0, nonShareable: 0, highlySensitive: 0, invalid: 0 };
+  const excluded = { unconfirmed: 0, nonShareable: 0, highlySensitive: 0, invalid: 0, applicabilityOutOfPeriod: 0 };
   const supported = new Set(["boolean", "single_choice", "number", "integer", "scale", "duration_minutes"]);
   for (const row of rows) {
     if (!selected.has(`${row.template_id}:${row.field_key}`)) continue;
@@ -240,13 +249,15 @@ function analysisSnapshotV2(profileId: string, startAt?: string, endAt?: string,
     const record: { id: string; recordedAt: string; title?: string; sourceDocumentId: string | null; values: any[] } = records.get(row.entry_id) ?? { id: row.entry_id, recordedAt: row.recorded_at, title: String(row.template_id), sourceDocumentId: typeof row.source_id === "string" && row.source_id.startsWith("doc_") ? row.source_id : null, values: [] };
     let allowedValues: Array<{ key: string; label: string }> | undefined;
     try { const options = JSON.parse(row.options_json); if (Array.isArray(options)) allowedValues = options.filter((item): item is { key: string; label: string } => Boolean(item) && typeof item.key === "string" && typeof item.label === "string"); } catch { excluded.invalid += 1; continue; }
+    const applicability = db.prepare("SELECT applicability_condition AS condition,valid_from AS validFrom,valid_to AS validTo FROM context_value_applicability WHERE value_id=? ORDER BY valid_from").all(row.value_id) as Array<{ condition: string | null; validFrom: string | null; validTo: string | null }>;
+    if (applicability.length > 0 && !periodsIntersect(applicability, lower, upper)) { excluded.applicabilityOutOfPeriod += 1; continue; }
     const source = row.source === "user_input" ? "user_input" : row.source === "manual_import" ? "manual_import" : "manual_import";
     record.values.push({
       fieldKey: row.field_key, label: row.label, valueType: row.value_type, value,
       templateId: row.template_id, templateVersionId: String(row.template_version),
       analysisRole: row.analysis_role, analysisRoleConfirmed: true, analysisUsage: row.analysis_usage,
       analysisMergeAllowed: Boolean(row.analysis_merge_allowed), scaleFingerprint: [row.value_type, row.minimum_value ?? "", row.maximum_value ?? "", row.unit ?? "", JSON.stringify(allowedValues ?? [])].join("|"),
-      unit: row.unit ?? undefined, minimum: row.minimum_value ?? undefined, maximum: row.maximum_value ?? undefined, allowedValues, positiveValueKeys: JSON.parse(row.positive_value_keys_json ?? "[]"), orderedValueKeys: JSON.parse(row.ordered_value_keys_json ?? "[]"), numericMapping: JSON.parse(row.numeric_mapping_json ?? "{}"), applicability: (db.prepare("SELECT applicability_condition AS condition,valid_from AS validFrom,valid_to AS validTo FROM context_value_applicability WHERE value_id=? ORDER BY valid_from").all(row.value_id) as Array<{ condition: string | null; validFrom: string | null; validTo: string | null }>),
+      unit: row.unit ?? undefined, minimum: row.minimum_value ?? undefined, maximum: row.maximum_value ?? undefined, allowedValues, positiveValueKeys: JSON.parse(row.positive_value_keys_json ?? "[]"), orderedValueKeys: JSON.parse(row.ordered_value_keys_json ?? "[]"), numericMapping: JSON.parse(row.numeric_mapping_json ?? "{}"), applicability,
       provenance: { source, sourceId: row.source_id ?? row.entry_id, userConfirmed: true, recordedAt: row.recorded_at, transformVersion: "pcs-v2", privacyLevel: row.sensitivity === "sensitive" ? "sensitive" : "normal" }
     });
     records.set(row.entry_id, record);

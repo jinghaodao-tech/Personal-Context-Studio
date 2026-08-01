@@ -32,7 +32,24 @@ test("management and integration credentials stay within their own API boundary"
     const imported = await sdk.submitImport({ id: "sdk_import", sourceSystem: "sdk_test", payload: { kind: "candidate" } });
     assert.equal((imported as any).decision, "pending");
     assert.equal((await api("/v1/context-templates", "GET", undefined, { "x-pcs-client-id": created.body.id, authorization: `Bearer ${created.body.token}` })).response.status, 401);
-  } finally {
+    const sensitiveTemplate = await api("/v1/context-templates", "POST", { name: "Disclosure boundaries", purpose: "test", fields: [
+      { fieldKey: "public_value", label: "Public", valueType: "number", required: false, displayOrder: 1, analysisRole: "public_value", analysisRoleConfirmed: true, analysisUsage: "outcome", analysisMergeAllowed: true, sharingDefault: "always", sensitivity: "normal", reason: "Public fixture" },
+      { fieldKey: "private_value", label: "Private", valueType: "text", required: false, displayOrder: 2, sharingDefault: "private", sensitivity: "normal", reason: "Private fixture" },
+      { fieldKey: "never_value", label: "Never", valueType: "text", required: false, displayOrder: 3, sharingDefault: "never", sensitivity: "normal", reason: "Never fixture" },
+      { fieldKey: "high_value", label: "Highly sensitive", valueType: "text", required: false, displayOrder: 4, sharingDefault: "always", sensitivity: "highly_sensitive", reason: "Sensitive fixture" }
+    ] }, managementHeaders);
+    await api(`/v1/context-templates/${sensitiveTemplate.body.item.id}/activate`, "POST", undefined, managementHeaders);
+    const sensitiveEntry = await api("/v1/context-entries", "POST", { templateId: sensitiveTemplate.body.item.id, values: { public_value: 1, private_value: "private", never_value: "never" } }, managementHeaders);
+    const sensitiveProfile = await api("/v1/context-profiles", "POST", { name: "Disclosure profile", target: "json", includedFields: ["public_value", "private_value", "never_value", "high_value"].map((fieldKey) => ({ templateId: sensitiveTemplate.body.item.id, fieldKey })) }, managementHeaders);
+    const sensitiveClient = await api("/v1/integration-clients", "POST", { name: "Disclosure client", permissions: ["read_snapshot"], allowedProfileIds: [sensitiveProfile.body.id] }, managementHeaders);
+    const sensitiveSnapshot = await api(`/v1/context/analysis-snapshot?profileId=${sensitiveProfile.body.id}`, "GET", undefined, { "x-pcs-client-id": sensitiveClient.body.id, authorization: `Bearer ${sensitiveClient.body.token}` });
+    const exportedFields = sensitiveSnapshot.body.records.flatMap((record: any) => record.values.map((value: any) => value.fieldKey));
+    assert.ok(exportedFields.includes("public_value"));
+    assert.equal(exportedFields.includes("private_value"), false);
+    assert.equal(exportedFields.includes("never_value"), false);
+    assert.equal(exportedFields.includes("high_value"), false);
+    const secretEntry = await api("/v1/context-entries", "POST", { templateId: sensitiveTemplate.body.item.id, values: { public_value: "OPENAI_API_KEY=sk-test-secret" } }, managementHeaders);
+    assert.equal(secretEntry.response.status, 400);  } finally {
     if (!child.killed && child.exitCode === null) child.kill();
     if (child.exitCode === null) await new Promise<void>((resolve) => child.once("exit", () => resolve()));
     for (let attempt = 0; attempt < 10; attempt += 1) {
