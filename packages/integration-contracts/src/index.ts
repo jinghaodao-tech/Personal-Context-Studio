@@ -44,12 +44,16 @@ const applicabilityKeys = new Set(["condition", "validFrom", "validTo"]);
 function validateApplicability(value: unknown): Array<{ condition: string | null; validFrom: string | null; validTo: string | null }> | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) throw new Error("context_analysis_applicability_invalid");
+  const fingerprints = new Set<string>();
   return value.map((item) => {
     if (!isRecord(item) || Object.keys(item).some((key) => !applicabilityKeys.has(key))) throw new Error("context_analysis_applicability_invalid");
     const condition = item.condition === null ? null : item.condition;
     const validFrom = item.validFrom === null ? null : item.validFrom;
     const validTo = item.validTo === null ? null : item.validTo;
     if ((condition !== null && (typeof condition !== "string" || !condition.trim())) || (validFrom !== null && !validTimestamp(validFrom as string)) || (validTo !== null && !validTimestamp(validTo as string)) || (validFrom !== null && validTo !== null && Date.parse(validFrom as string) >= Date.parse(validTo as string)) || (condition === null && validFrom === null && validTo === null)) throw new Error("context_analysis_applicability_invalid");
+    const fingerprint = `${condition === null ? "" : String(condition).trim().toLocaleLowerCase()}|${validFrom ?? ""}|${validTo ?? ""}`;
+    if (fingerprints.has(fingerprint)) throw new Error("context_analysis_applicability_duplicate");
+    fingerprints.add(fingerprint);
     return { condition: condition as string | null, validFrom: validFrom as string | null, validTo: validTo as string | null };
   });
 }
