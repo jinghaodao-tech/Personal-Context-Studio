@@ -140,6 +140,9 @@ export function applyMigrations(db: DatabaseSync, schemaSql: string) {
       addColumn("ordered_value_keys_json", "TEXT NOT NULL DEFAULT '[]'");
       addColumn("numeric_mapping_json", "TEXT NOT NULL DEFAULT '{}'");
     } },
+    { version: "015_context_value_applicability", apply: () => {
+      db.exec("CREATE TABLE IF NOT EXISTS context_value_applicability (id TEXT PRIMARY KEY, value_id TEXT NOT NULL REFERENCES context_values(id) ON DELETE CASCADE, conflict_id TEXT NOT NULL REFERENCES context_conflicts(id) ON DELETE CASCADE, applicability_condition TEXT, valid_from TEXT, valid_to TEXT, created_at TEXT NOT NULL, CHECK(applicability_condition IS NOT NULL OR valid_from IS NOT NULL OR valid_to IS NOT NULL)) STRICT; CREATE INDEX IF NOT EXISTS context_value_applicability_conflict_idx ON context_value_applicability(conflict_id); CREATE INDEX IF NOT EXISTS context_value_applicability_value_idx ON context_value_applicability(value_id);");
+    } },
   ];
   const applied = new Set((db.prepare("SELECT version FROM schema_migrations").all() as Array<{ version: string }>).map((row) => row.version));
   for (const migration of migrations) {

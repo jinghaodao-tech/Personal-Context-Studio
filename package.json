@@ -11,18 +11,25 @@
                     "adapter":  "node --experimental-strip-types apps/cli/src/main.ts adapter",
                     "crypto:rekey":  "node --experimental-strip-types scripts/rekey-encryption.mjs",
                     "ops:diagnostics":  "node scripts/ops-diagnostics.mjs",
+                    "db:diagnostics":  "node scripts/db-diagnostics.mjs",
+                    "db:backup-retention":  "node scripts/plan-backup-retention.mjs",
+                    "db:verify-backup":  "node scripts/verify-backup.mjs",
+                    "ops:watch":  "node scripts/ops-watch.mjs",
                     "check:packaging":  "node scripts/check-packaging.mjs",
                     "test":  "node --experimental-strip-types --test test/*.test.ts",
                     "test:e2e":  "node --experimental-strip-types --test test/browser-e2e.test.ts",
                     "typecheck":  "tsc --project tsconfig.json",
                     "check:encoding":  "node scripts/check-encoding.mjs",
-                    "verify":  "npm run typecheck \u0026\u0026 npm run test \u0026\u0026 npm run check:encoding",
-                    "verify:ci":  "npm ci \u0026\u0026 npm run verify"
+                    "check:migrations":  "node --experimental-strip-types scripts/check-migrations.mjs",
+                    "verify":  "npm run build:contracts \u0026\u0026 npm run typecheck \u0026\u0026 npm run test \u0026\u0026 npm run check:migrations \u0026\u0026 npm run check:encoding",
+                    "verify:ci":  "npm ci \u0026\u0026 npm run verify",
+                    "build:contracts":  "tsc packages/integration-contracts/src/index.ts --target ES2022 --module NodeNext --moduleResolution NodeNext --skipLibCheck --declaration --outDir packages/integration-contracts/dist"
                 },
     "engines":  {
                     "node":  "\u003e=24.0.0"
                 },
     "devDependencies":  {
+                            "@types/node":  "^24.0.0",
                             "playwright":  "^1.62.1",
                             "typescript":  "^5.8.3"
                         },

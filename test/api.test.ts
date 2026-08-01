@@ -14,6 +14,9 @@ test("local API keeps imports pending and omits non-shareable context", async ()
   const url = (path: string) => `http://127.0.0.1:${port}${path}`;
   try {
     for (let attempt = 0; attempt < 30; attempt += 1) { try { if ((await fetch(url("/health"))).ok) break; } catch { /* wait */ } await new Promise((resolve) => setTimeout(resolve, 75)); }
+    const malformedRestore = await fetch(url("/v1/backups/missing/restore"), { method: "POST", headers: { "content-type": "application/json" }, body: "{" });
+    assert.equal(malformedRestore.status, 400);
+    assert.equal((await malformedRestore.json() as any).error, "invalid_json");
     const template = await fetch(url("/v1/context-templates"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Coding", purpose: "coding_ai", fields: [{ fieldKey: "editor", label: "Editor", valueType: "text", required: true, displayOrder: 1, sharingDefault: "always", sensitivity: "normal", reason: "Editor preference" }, { fieldKey: "health_note", label: "Health note", valueType: "text", required: false, displayOrder: 2, sharingDefault: "private", sensitivity: "sensitive", reason: "Private note" }] }) });
     assert.equal(template.status, 201); const templateId = (await template.json() as any).item.id;
     assert.equal((await fetch(url(`/v1/context-templates/${templateId}/activate`), { method: "POST" })).status, 200);

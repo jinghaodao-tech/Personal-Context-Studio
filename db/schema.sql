@@ -38,3 +38,7 @@ CREATE TABLE IF NOT EXISTS context_backups (id TEXT PRIMARY KEY, file_name TEXT 
 CREATE TABLE IF NOT EXISTS context_restore_plans (id TEXT PRIMARY KEY, backup_id TEXT NOT NULL REFERENCES context_backups(id), confirmation_token TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN('planned','executed','cancelled')), created_at TEXT NOT NULL, executed_at TEXT) STRICT;
 CREATE TABLE IF NOT EXISTS auth_sessions (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, expires_at TEXT NOT NULL, created_at TEXT NOT NULL, revoked_at TEXT) STRICT;
 CREATE INDEX IF NOT EXISTS auth_sessions_active_idx ON auth_sessions(token_hash,expires_at) WHERE revoked_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS context_value_applicability (id TEXT PRIMARY KEY, value_id TEXT NOT NULL REFERENCES context_values(id) ON DELETE CASCADE, conflict_id TEXT NOT NULL REFERENCES context_conflicts(id) ON DELETE CASCADE, applicability_condition TEXT, valid_from TEXT, valid_to TEXT, created_at TEXT NOT NULL, CHECK(applicability_condition IS NOT NULL OR valid_from IS NOT NULL OR valid_to IS NOT NULL)) STRICT;
+CREATE INDEX IF NOT EXISTS context_value_applicability_conflict_idx ON context_value_applicability(conflict_id);
+CREATE INDEX IF NOT EXISTS context_value_applicability_value_idx ON context_value_applicability(value_id);

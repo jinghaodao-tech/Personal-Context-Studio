@@ -21,6 +21,7 @@ import { handleRuntimeRoute } from "./routes/runtime.ts";
 import { handleProfileRoute } from "./routes/profiles.ts";
 import { handleEntryRoute } from "./routes/entries.ts";
 import { handleLifecycleRoute } from "./routes/lifecycle.ts";
+import { readDashboardOverview, readDashboardValues } from "./services/dashboard.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
 const databasePath = process.env.PCS_DB ?? resolve(root, "data", "personal-context-studio.sqlite3");
@@ -291,9 +292,6 @@ function detectConflicts(entryId: string, fieldKey: string) {
   }
 }
 
-function dashboardValues() { return (db.prepare("SELECT v.id AS value_id,v.entry_id,v.field_key,v.value_json,v.user_confirmed,v.sharing,v.sensitivity,v.lifecycle_state,v.current_revision_id,v.recorded_at,v.updated_at,e.template_id,t.name AS template_name,f.label FROM context_values v JOIN context_entries e ON e.id=v.entry_id JOIN context_templates t ON t.id=e.template_id JOIN context_template_fields f ON f.template_id=e.template_id AND f.field_key=v.field_key WHERE e.status='active' ORDER BY v.updated_at DESC").all() as any[]).map((value) => ({ ...value, value_json: decodedJson(value), purpose_ids: (db.prepare("SELECT purpose_id FROM context_value_purposes WHERE value_id=? ORDER BY purpose_id").all(value.value_id) as Array<{ purpose_id: string }>).map((item) => item.purpose_id) })); }
-function dashboardOverview() { const count = (sql: string) => Number((db.prepare(sql).get() as { count: number }).count); return { confirmedValues: count("SELECT COUNT(*) AS count FROM context_values v JOIN context_entries e ON e.id=v.entry_id WHERE e.status='active' AND v.user_confirmed=1 AND v.lifecycle_state='active'"), pendingValues: count("SELECT COUNT(*) AS count FROM context_values v JOIN context_entries e ON e.id=v.entry_id WHERE e.status='active' AND v.user_confirmed=0"), shareableValues: count("SELECT COUNT(*) AS count FROM context_values v JOIN context_entries e ON e.id=v.entry_id WHERE e.status='active' AND v.user_confirmed=1 AND v.lifecycle_state='active' AND v.sharing IN ('always','purpose_only') AND v.sensitivity!='highly_sensitive'"), retractedValues: count("SELECT COUNT(*) AS count FROM context_values v JOIN context_entries e ON e.id=v.entry_id WHERE e.status='active' AND v.lifecycle_state='retracted'") }; }
-
 export const server = createServer(async (request, response) => {
   const requestId = typeof request.headers["x-request-id"] === "string" && request.headers["x-request-id"].length < 100 ? request.headers["x-request-id"] : randomUUID();
   response.setHeader("x-request-id", requestId);
@@ -313,8 +311,8 @@ export const server = createServer(async (request, response) => {
      if (await handleLifecycleRoute(request, response, url, parts, { db, send, body, text, now, audit, provenance, decodedJson, validPurpose, valueRow, addRevision, newId, revisionSourceHash, exportPreview, isSecretLike })) return;
      if (await handleContentRoute(request, response, url, parts, { db, send, body, text, now, newId, audit, provenance, notesRoot, readMarkdownSnapshot, excerpt, ftsTerms, upsertDocument, integrationPermissions, integrationAuthorized, hashIntegrationToken, randomToken: () => randomBytes(32).toString("base64url"), decodedJson })) return;
      if (await handleTemplateRoute(request, response, url, parts, { db, send, body, text, now, newId, audit, provenance, templateDetail, integrationAuthorized, localAiProvider })) return;
-    if (request.method === "GET" && url.pathname === "/v1/dashboard/overview") return send(response, 200, dashboardOverview());
-    if (request.method === "GET" && url.pathname === "/v1/dashboard/values") return send(response, 200, { items: dashboardValues() });
+    if (request.method === "GET" && url.pathname === "/v1/dashboard/overview") return send(response, 200, readDashboardOverview(db));
+    if (request.method === "GET" && url.pathname === "/v1/dashboard/values") return send(response, 200, { items: readDashboardValues(db, decodedJson) });
     if (request.method === "GET" && url.pathname === "/v1/watcher/status") { try { return send(response, 200, JSON.parse(readFileSync(watcherStatePath, "utf8"))); } catch { return send(response, 404, { error: "watcher_status_unavailable" }); } }
     return send(response, 404, { error: "not_found" });
   } catch (error) { const message = error instanceof Error ? error.message : "request_failed"; const status = clientErrorStatus(message); return send(response, status ?? 500, { error: status ? message : "internal_error", requestId }); }

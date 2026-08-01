@@ -33,8 +33,11 @@ test("management and integration credentials stay within their own API boundary"
     assert.equal((imported as any).decision, "pending");
     assert.equal((await api("/v1/context-templates", "GET", undefined, { "x-pcs-client-id": created.body.id, authorization: `Bearer ${created.body.token}` })).response.status, 401);
   } finally {
-    child.kill();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    rmSync(directory, { recursive: true, force: true });
+    if (!child.killed && child.exitCode === null) child.kill();
+    if (child.exitCode === null) await new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      try { rmSync(directory, { recursive: true, force: true }); break; }
+      catch (error) { if (attempt === 9) throw error; await new Promise((resolve) => setTimeout(resolve, 100)); }
+    }
   }
 });

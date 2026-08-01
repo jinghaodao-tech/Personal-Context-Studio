@@ -100,3 +100,11 @@ function spawnMcp() {
     close() { child.kill(); },
   };
 }
+
+test("official analysis contract rejects unsafe ranges, choices, periods, timezone and excluded counts", () => {
+  const base = { schemaVersion: "pcs-analysis-snapshot-v2", contractRevision: "pcs-analysis-snapshot-v2.1", snapshotId: "snapshot-1", profileId: "profile-1", generatedAt: "2026-07-02T00:00:00.000Z", period: { startAt: "2026-07-01T00:00:00.000Z", endAt: "2026-07-03T00:00:00.000Z", timezone: "Asia/Tokyo" }, records: [], excluded: {} };
+  assert.equal(validateContextAnalysisSnapshot(base).schemaVersion, "pcs-analysis-snapshot-v2");
+  assert.throws(() => validateContextAnalysisSnapshot({ ...base, period: { ...base.period, endAt: base.period.startAt } }), /invalid/);
+  assert.throws(() => validateContextAnalysisSnapshot({ ...base, period: { ...base.period, timezone: "Not/AZone" } }), /invalid/);
+  assert.throws(() => validateContextAnalysisSnapshot({ ...base, excluded: { invalid: -1 } }), /invalid/);
+});

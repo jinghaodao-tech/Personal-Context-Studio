@@ -13,6 +13,32 @@ Diagnostics checks the health endpoint and reports the latest migration,
 encryption configuration, and Markdown watcher state. It never prints tokens,
 note bodies, or database values.
 
+For a read-only SQLite and backup integrity check, run:
+
+```powershell
+npm.cmd run db:diagnostics
+```
+
+This command does not repair or delete data. A non-zero exit means that an
+operator should preserve the database and investigate the reported integrity
+or backup issue before attempting recovery.
+
+Backup retention is explicit and dry-run by default:
+
+```powershell
+npm.cmd run db:backup-retention
+npm.cmd run db:backup-retention -- --apply
+```
+
+Set `PCS_BACKUP_KEEP` to change the number of newest backups retained. Review
+the dry-run output before using `--apply`.
+
+Verify one backup without replacing the live database:
+
+```powershell
+npm.cmd run db:verify-backup -- <backup-id>
+```
+
 ## Logs
 
 Set `PCS_LOG_FILE` to write JSON Lines logs and `PCS_LOG_MAX_BYTES` to rotate
@@ -46,3 +72,8 @@ PCS_LOG_MAX_BYTES
 PCS_SUPERVISOR_STATE
 PCS_REQUIRE_AUTH
 ```
+
+For a one-shot health check use `npm.cmd run ops:watch -- --once`. Without
+`--once`, it polls the API and watcher state until stopped with Ctrl+C, making
+it suitable for Task Scheduler or another process supervisor. It does not
+restart services or print note contents.
