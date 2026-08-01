@@ -1,0 +1,83 @@
+export const CONTEXT_ANALYSIS_SNAPSHOT_VERSION = "pcs-context-analysis-snapshot-v1";
+export const CONTEXT_ANALYSIS_SNAPSHOT_V2_VERSION = "pcs-analysis-snapshot-v2";
+export const PCS_ANALYSIS_CONTRACT_REVISION = "pcs-analysis-snapshot-v2.1";
+export const INTEGRATION_TEMPLATE_REQUEST_VERSION = "pcs-integration-template-request-v1";
+const keyPattern = /^[a-z][a-z0-9_]{0,63}$/;
+const maxJsonBytes = 200_000;
+function isRecord(value) { return Boolean(value) && typeof value === "object" && !Array.isArray(value); }
+function validTimestamp(value) { return typeof value === "string" && !Number.isNaN(Date.parse(value)); }
+function validSourceSystem(value) { return typeof value === "string" && /^[a-z][a-z0-9_-]{0,63}$/.test(value); }
+const analysisValueKeys = new Set(["fieldKey", "label", "valueType", "value", "templateId", "templateVersionId", "analysisRole", "analysisRoleConfirmed", "analysisUsage", "analysisMergeAllowed", "scaleFingerprint", "unit", "minimum", "maximum", "allowedValues", "positiveValueKeys", "orderedValueKeys", "numericMapping", "provenance"]);
+const analysisValueTypes = new Set(["boolean", "single_choice", "number", "integer", "scale", "duration_minutes"]);
+function validateAnalysisValue(value) {
+    if (!isRecord(value) || [...Object.keys(value)].some((key) => !analysisValueKeys.has(key)) || typeof value.fieldKey !== "string" || !keyPattern.test(value.fieldKey) || typeof value.label !== "string" || typeof value.templateId !== "string" || typeof value.templateVersionId !== "string" || typeof value.analysisRole !== "string" || value.analysisRoleConfirmed !== true || !["condition", "outcome", "both", "excluded"].includes(String(value.analysisUsage)) || typeof value.analysisMergeAllowed !== "boolean" || typeof value.scaleFingerprint !== "string" || !analysisValueTypes.has(String(value.valueType)))
+        throw new Error("context_analysis_value_invalid");
+    const type = String(value.valueType);
+    const validValue = type === "boolean" ? typeof value.value === "boolean" : type === "single_choice" ? typeof value.value === "string" : typeof value.value === "number" && Number.isFinite(value.value) && (type !== "integer" || Number.isInteger(value.value));
+    if (!validValue)
+        throw new Error("context_analysis_value_invalid");
+    if ((value.minimum !== undefined && (typeof value.minimum !== "number" || !Number.isFinite(value.minimum))) || (value.maximum !== undefined && (typeof value.maximum !== "number" || !Number.isFinite(value.maximum))) || (value.minimum !== undefined && value.maximum !== undefined && value.minimum > value.maximum))
+        throw new Error("context_analysis_value_range_invalid");
+    if (value.allowedValues !== undefined && (!Array.isArray(value.allowedValues) || new Set(value.allowedValues.map((item) => item.key)).size !== value.allowedValues.length || value.allowedValues.some((item) => !isRecord(item) || typeof item.key !== "string" || typeof item.label !== "string")))
+        throw new Error("context_analysis_value_choices_invalid");
+    const keys = new Set((Array.isArray(value.allowedValues) ? value.allowedValues : []).map((item) => isRecord(item) ? String(item.key) : ""));
+    for (const name of ["positiveValueKeys", "orderedValueKeys"])
+        if (value[name] !== undefined && (!Array.isArray(value[name]) || new Set(value[name]).size !== value[name].length || value[name].some((item) => typeof item !== "string" || !keys.has(item))))
+            throw new Error("context_analysis_value_semantics_invalid");
+    if (value.numericMapping !== undefined && (!isRecord(value.numericMapping) || Object.entries(value.numericMapping).some(([key, item]) => !keys.has(key) || typeof item !== "number" || !Number.isFinite(item))))
+        throw new Error("context_analysis_value_semantics_invalid");
+    if (!isRecord(value.provenance) || !["user_input", "reviewed_ai_extraction", "manual_import"].includes(String(value.provenance.source)) || typeof value.provenance.sourceId !== "string" || value.provenance.userConfirmed !== true || !validTimestamp(value.provenance.recordedAt) || typeof value.provenance.transformVersion !== "string" || !["normal", "sensitive"].includes(String(value.provenance.privacyLevel)))
+        throw new Error("context_analysis_value_provenance_invalid");
+    return value;
+}
+export function validateContextAnalysisSnapshot(value) {
+    if (!isRecord(value) || !validTimestamp(value.generatedAt))
+        throw new Error("context_analysis_snapshot_invalid");
+    if (value.schemaVersion === CONTEXT_ANALYSIS_SNAPSHOT_VERSION && Array.isArray(value.records) && isRecord(value.excluded)) {
+        for (const record of value.records) {
+            if (!isRecord(record) || typeof record.id !== "string" || !validTimestamp(record.recordedAt) || typeof record.title !== "string" || record.title.length > 500 || !Array.isArray(record.values))
+                throw new Error("context_analysis_snapshot_invalid");
+            for (const item of record.values)
+                if (!isRecord(item) || typeof item.fieldKey !== "string" || !keyPattern.test(item.fieldKey) || typeof item.label !== "string" || typeof item.templateId !== "string" || !("value" in item))
+                    throw new Error("context_analysis_snapshot_invalid");
+        }
+        return value;
+    }
+    if (value.schemaVersion === CONTEXT_ANALYSIS_SNAPSHOT_V2_VERSION && value.contractRevision === PCS_ANALYSIS_CONTRACT_REVISION && typeof value.snapshotId === "string" && typeof value.profileId === "string" && isRecord(value.period) && validTimestamp(value.period.startAt) && validTimestamp(value.period.endAt) && typeof value.period.timezone === "string" && Array.isArray(value.records) && isRecord(value.excluded)) {
+        if (JSON.stringify(value).length > maxJsonBytes)
+            throw new Error("context_analysis_snapshot_too_large");
+        for (const record of value.records)
+            if (!isRecord(record) || typeof record.id !== "string" || !validTimestamp(record.recordedAt) || !Array.isArray(record.values) || record.values.some((item) => { validateAnalysisValue(item); return false; }))
+                throw new Error("context_analysis_snapshot_invalid");
+        return value;
+    }
+    throw new Error("context_analysis_snapshot_invalid");
+}
+export function validateIntegrationTemplateRequest(value) {
+    if (!isRecord(value) || value.schemaVersion !== INTEGRATION_TEMPLATE_REQUEST_VERSION || !validSourceSystem(value.sourceSystem) || typeof value.id !== "string" || !value.id || typeof value.title !== "string" || !value.title.trim() || typeof value.purpose !== "string" || !value.purpose.trim() || !validTimestamp(value.createdAt) || !Array.isArray(value.requestedFields))
+        throw new Error("integration_template_request_invalid");
+    if (value.sourceReferenceId !== null && value.sourceReferenceId !== undefined && typeof value.sourceReferenceId !== "string")
+        throw new Error("integration_template_request_invalid");
+    if (value.durationDays !== null && value.durationDays !== undefined && (typeof value.durationDays !== "number" || !Number.isInteger(value.durationDays) || value.durationDays < 1 || value.durationDays > 366))
+        throw new Error("integration_template_request_invalid");
+    for (const field of value.requestedFields) {
+        if (!isRecord(field) || typeof field.fieldKey !== "string" || !keyPattern.test(field.fieldKey) || typeof field.label !== "string" || !field.label.trim() || typeof field.valueType !== "string" || typeof field.required !== "boolean" || typeof field.reason !== "string" || !field.reason.trim())
+            throw new Error("integration_template_request_invalid");
+        if (field.options !== undefined && (!Array.isArray(field.options) || field.options.some((option) => !isRecord(option) || typeof option.key !== "string" || typeof option.label !== "string")))
+            throw new Error("integration_template_request_invalid");
+    }
+    if (JSON.stringify(value).length > maxJsonBytes)
+        throw new Error("integration_template_request_too_large");
+    return value;
+}
+export function validateIntegrationImport(value) {
+    if (!isRecord(value) || typeof value.id !== "string" || !value.id || !validSourceSystem(value.sourceSystem) || !isRecord(value.payload) || (value.sourceReferenceId !== undefined && value.sourceReferenceId !== null && typeof value.sourceReferenceId !== "string") || (value.createdAt !== undefined && !validTimestamp(value.createdAt)))
+        throw new Error("integration_import_invalid");
+    if (JSON.stringify(value).length > maxJsonBytes || Object.keys(value.payload).length > 100 || Object.keys(value.payload).some((key) => !key || key.length > 120))
+        throw new Error("integration_import_too_large");
+    if (/(api[_ -]?key|password|private[_ -]?key|secret|authorization|bearer\s+)/i.test(JSON.stringify(value.payload)))
+        throw new Error("integration_import_secret_like");
+    return value;
+}
+export function localPcsUrl(value) { const url = new URL(value); if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname))
+    throw new Error("pcs_localhost_required"); return url; }

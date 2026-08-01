@@ -1,4 +1,4 @@
-﻿{
+{
     "name":  "personal-context-studio",
     "private":  true,
     "type":  "module",
@@ -28,10 +28,10 @@
                         },
     "exports":  {
                     ".":  "./README.md",
-                    "./integration-contracts":  "./packages/integration-contracts/src/index.ts"
+                    "./integration-contracts":  "./packages/integration-contracts/dist/index.js"
                 },
     "files":  [
-                  "packages/integration-contracts/src",
+                  "packages/integration-contracts/dist",
                   "packages/integration-contracts/package.json",
                   "README.md"
               ]
