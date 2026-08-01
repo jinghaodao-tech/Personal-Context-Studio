@@ -30,6 +30,10 @@ test("review, purpose-limited sharing, export history, conflicts, reconfirmation
     assert.equal(provenance.body.items.some((item: any) => item.event_type === "candidate_extracted" && item.source_content_hash), true);
     assert.equal(JSON.stringify(provenance.body.items).includes("I had focused energy"), false);
     assert.equal((await api("/v1/reconfirmations/due")).body.items.length, 1);
+    const reconfirmed = await api(`/v1/context-entries/${first.body.id}/values/energy/reconfirm`, "POST", { reason: "Still accurate" });
+    assert.equal(reconfirmed.response.status, 200);
+    const reconfirmationHistory = await api(`/v1/context-entries/${first.body.id}/values/energy/revisions`);
+    assert.equal(reconfirmationHistory.body.items.some((item: any) => item.change_type === "reaffirmation"), true);
     const purpose = await api("/v1/sharing-purposes", "POST", { name: "work-planning", description: "Planning assistance" });
     assert.deepEqual((await api(`/v1/context-entries/${first.body.id}/values/energy/purposes`, "PUT", { purposeIds: [purpose.body.id] })).body.purposeIds, [purpose.body.id]);
     const profile = await api("/v1/context-profiles", "POST", { name: "Work helper", target: "assistant", purposeId: purpose.body.id, includedFields: [{ templateId: template.body.item.id, fieldKey: "energy" }] });

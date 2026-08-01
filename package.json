@@ -1,29 +1,38 @@
-{
-  "name": "personal-context-studio",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "dev": "node --experimental-strip-types apps/api/src/server.ts",
-    "dev:watcher": "node --experimental-strip-types apps/watcher/src/main.ts",
-    "dev:supervisor": "node --experimental-strip-types apps/supervisor/src/main.ts",
-    "mcp": "node --experimental-strip-types apps/mcp/src/main.ts",
-    "cli": "node --experimental-strip-types apps/cli/src/main.ts",
-    "adapter": "node --experimental-strip-types apps/cli/src/main.ts adapter",
-    "crypto:rekey": "node --experimental-strip-types scripts/rekey-encryption.mjs",
-    "ops:diagnostics": "node scripts/ops-diagnostics.mjs",
-    "check:packaging": "node scripts/check-packaging.mjs",
-    "test": "node --experimental-strip-types --test test/*.test.ts",
-    "test:e2e": "node --experimental-strip-types --test test/browser-e2e.test.ts",
-    "typecheck": "tsc --project tsconfig.json",
-    "check:encoding": "node scripts/check-encoding.mjs",
-    "verify": "npm run typecheck && npm run test && npm run check:encoding",
-    "verify:ci": "npm ci && npm run verify"
-  },
-  "engines": {
-    "node": ">=24.0.0"
-  },
-  "devDependencies": {
-    "playwright": "^1.62.1",
-    "typescript": "^5.8.3"
-  }
+﻿{
+    "name":  "personal-context-studio",
+    "private":  true,
+    "type":  "module",
+    "scripts":  {
+                    "dev":  "node --experimental-strip-types apps/api/src/server.ts",
+                    "dev:watcher":  "node --experimental-strip-types apps/watcher/src/main.ts",
+                    "dev:supervisor":  "node --experimental-strip-types apps/supervisor/src/main.ts",
+                    "mcp":  "node --experimental-strip-types apps/mcp/src/main.ts",
+                    "cli":  "node --experimental-strip-types apps/cli/src/main.ts",
+                    "adapter":  "node --experimental-strip-types apps/cli/src/main.ts adapter",
+                    "crypto:rekey":  "node --experimental-strip-types scripts/rekey-encryption.mjs",
+                    "ops:diagnostics":  "node scripts/ops-diagnostics.mjs",
+                    "check:packaging":  "node scripts/check-packaging.mjs",
+                    "test":  "node --experimental-strip-types --test test/*.test.ts",
+                    "test:e2e":  "node --experimental-strip-types --test test/browser-e2e.test.ts",
+                    "typecheck":  "tsc --project tsconfig.json",
+                    "check:encoding":  "node scripts/check-encoding.mjs",
+                    "verify":  "npm run typecheck \u0026\u0026 npm run test \u0026\u0026 npm run check:encoding",
+                    "verify:ci":  "npm ci \u0026\u0026 npm run verify"
+                },
+    "engines":  {
+                    "node":  "\u003e=24.0.0"
+                },
+    "devDependencies":  {
+                            "playwright":  "^1.62.1",
+                            "typescript":  "^5.8.3"
+                        },
+    "exports":  {
+                    ".":  "./README.md",
+                    "./integration-contracts":  "./packages/integration-contracts/src/index.ts"
+                },
+    "files":  [
+                  "packages/integration-contracts/src",
+                  "packages/integration-contracts/package.json",
+                  "README.md"
+              ]
 }

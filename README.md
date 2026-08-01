@@ -35,6 +35,11 @@ PCS records applied SQLite schema versions in `schema_migrations`. Startup
 applies each migration transactionally and safely skips versions already
 recorded; Markdown files are never changed by a database migration.
 
+The canonical cross-repository analysis contract is exported from
+`packages/integration-contracts` as `@personal-context-studio/integration-contracts`.
+Consumers should use its strict validator and `ContextAnalysisValueV2` type;
+they must not copy or relax the snapshot contract in an integration client.
+
 ## Markdown source model
 
 `context_documents` stores only the relative path, stable document ID, title,

@@ -6,7 +6,7 @@ export type ExportTarget =
   | "markdown_manual"
   | "json";
 
-export type RenderField = { label: string; fieldKey?: string; value: unknown; purpose?: string; recordedAt?: string; provenance?: string; confirmationState?: string; lastReviewedAt?: string | null; reconfirmAfter?: string | null; lifecycle?: string; limitations?: string };
+export type RenderField = { label: string; fieldKey?: string; value: unknown; purpose?: string; recordedAt?: string; provenance?: string; confirmationState?: string; lastReviewedAt?: string | null; lastReconfirmedAt?: string | null; reconfirmAfter?: string | null; lifecycle?: string; limitations?: string };
 
 export function normalizeExportTarget(target: unknown, format: unknown = "markdown"): ExportTarget {
   const value = typeof target === "string" ? target.trim().toLowerCase() : "";
@@ -48,8 +48,11 @@ export type DetailLevel = "short" | "standard" | "detailed";
 export function renderTargetWithDetail(fields: RenderField[], target: ExportTarget, detailLevel: DetailLevel = "standard"): string {
   if (target === "json") return JSON.stringify({ schemaVersion: "pcs-context-snapshot-v2", detailLevel, values: Object.fromEntries(fields.map((item) => [item.fieldKey ?? item.label, detailLevel === "short" ? item.value : detailLevel === "standard" ? { value: item.value, purpose: item.purpose, recordedAt: item.recordedAt } : item])) }, null, 2);
   const body = renderTarget(fields, target);
-  if (detailLevel === "standard") return body;
-  const metadata = fields.map((item) => `- ${item.label}: ${item.value === undefined ? "" : valueText(item.value)}${detailLevel === "detailed" ? ` (purpose=${item.purpose ?? "unspecified"}; recordedAt=${item.recordedAt ?? "unknown"}; provenance=${item.provenance ?? "unknown"}; confirmation=${item.confirmationState ?? "unknown"}; lastReviewedAt=${item.lastReviewedAt ?? "unknown"}; reconfirmAfter=${item.reconfirmAfter ?? "none"}; lifecycle=${item.lifecycle ?? "unknown"}; limitations=${item.limitations ?? "none"})` : ""}`).join("\n");
+  if (detailLevel === "standard") {
+    const metadata = fields.map((item) => `- ${item.label}: ${item.value === undefined ? "" : valueText(item.value)} (purpose=${item.purpose ?? "unspecified"}; recordedAt=${item.recordedAt ?? "unknown"})`).join("\n");
+    return `${body}\n\nApproved metadata:\n${metadata}`;
+  }
+  const metadata = fields.map((item) => `- ${item.label}: ${item.value === undefined ? "" : valueText(item.value)}${detailLevel === "detailed" ? ` (purpose=${item.purpose ?? "unspecified"}; recordedAt=${item.recordedAt ?? "unknown"}; provenance=${item.provenance ?? "unknown"}; confirmation=${item.confirmationState ?? "unknown"}; lastReviewedAt=${item.lastReviewedAt ?? "unknown"}; lastReconfirmedAt=${item.lastReconfirmedAt ?? "unknown"}; reconfirmAfter=${item.reconfirmAfter ?? "none"}; lifecycle=${item.lifecycle ?? "unknown"}; limitations=${item.limitations ?? "none"})` : ""}`).join("\n");
   return "Detail level: " + detailLevel + ". Use this user-confirmed context only for the selected purpose.\\n\\n" + metadata;
 }
 
