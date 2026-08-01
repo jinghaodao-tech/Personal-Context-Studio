@@ -48,6 +48,11 @@ export type ContextAnalysisValueV2 = {
     analysisUsage: "condition" | "outcome" | "both" | "excluded";
     analysisMergeAllowed: boolean;
     scaleFingerprint: string;
+    applicability?: Array<{
+        condition: string | null;
+        validFrom: string | null;
+        validTo: string | null;
+    }>;
     unit?: string;
     minimum?: number;
     maximum?: number;

@@ -108,3 +108,14 @@ test("official analysis contract rejects unsafe ranges, choices, periods, timezo
   assert.throws(() => validateContextAnalysisSnapshot({ ...base, period: { ...base.period, timezone: "Not/AZone" } }), /invalid/);
   assert.throws(() => validateContextAnalysisSnapshot({ ...base, excluded: { invalid: -1 } }), /invalid/);
 });
+
+test("rejects malformed V2 records, duplicate fields, applicability and unknown keys", () => {
+  const baseValue = { fieldKey: "clarity", label: "Clarity", valueType: "scale", value: 2, templateId: "t", templateVersionId: "v1", analysisRole: "condition", analysisRoleConfirmed: true, analysisUsage: "condition", analysisMergeAllowed: false, scaleFingerprint: "scale|1|5", minimum: 1, maximum: 5, provenance: { source: "user_input", sourceId: "entry", userConfirmed: true, recordedAt: "2026-08-01T00:00:00.000Z", transformVersion: "test", privacyLevel: "normal" } };
+  const base = { schemaVersion: "pcs-analysis-snapshot-v2", contractRevision: "pcs-analysis-snapshot-v2.1", snapshotId: "snapshot", profileId: "profile", generatedAt: "2026-08-01T00:00:00.000Z", period: { startAt: "2026-08-01T00:00:00.000Z", endAt: "2026-08-02T00:00:00.000Z", timezone: "UTC" }, records: [{ id: "record", recordedAt: "2026-08-01T00:00:00.000Z", sourceDocumentId: null, values: [baseValue] }], excluded: {} };
+  assert.equal(validateContextAnalysisSnapshot(base).records.length, 1);
+  assert.throws(() => validateContextAnalysisSnapshot({ ...base, records: [{ ...base.records[0], values: [{ ...baseValue, value: 6 }] }] }), /out_of_range/);
+  assert.throws(() => validateContextAnalysisSnapshot({ ...base, records: [{ ...base.records[0], extra: true }] }), /record_invalid/);
+  assert.throws(() => validateContextAnalysisSnapshot({ ...base, extra: true }), /snapshot_invalid/);
+  assert.throws(() => validateContextAnalysisSnapshot({ ...base, records: [{ ...base.records[0], values: [baseValue, baseValue] }] }), /duplicate_field/);
+  assert.throws(() => validateContextAnalysisSnapshot({ ...base, records: [{ ...base.records[0], values: [{ ...baseValue, applicability: [{ condition: "workday", validFrom: "2026-08-02T00:00:00.000Z", validTo: "2026-08-01T00:00:00.000Z" }] }] }] }), /applicability_invalid/);
+});
