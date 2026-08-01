@@ -15,7 +15,7 @@ catch {
     return false;
 } }
 function validSourceSystem(value) { return typeof value === "string" && /^[a-z][a-z0-9_-]{0,63}$/.test(value); }
-const analysisValueKeys = new Set(["fieldKey", "label", "valueType", "value", "templateId", "templateVersionId", "analysisRole", "analysisRoleConfirmed", "analysisUsage", "analysisMergeAllowed", "scaleFingerprint", "unit", "minimum", "maximum", "allowedValues", "positiveValueKeys", "orderedValueKeys", "numericMapping", "provenance"]);
+const analysisValueKeys = new Set(["fieldKey", "label", "valueType", "value", "templateId", "templateVersionId", "analysisRole", "analysisRoleConfirmed", "analysisUsage", "analysisMergeAllowed", "scaleFingerprint", "applicability", "unit", "minimum", "maximum", "allowedValues", "positiveValueKeys", "orderedValueKeys", "numericMapping", "provenance"]);
 function validateAnalysisValue(value) {
     if (!isRecord(value) || Object.keys(value).some((key) => !analysisValueKeys.has(key)) || typeof value.fieldKey !== "string" || !keyPattern.test(value.fieldKey) || typeof value.label !== "string" || typeof value.templateId !== "string" || typeof value.templateVersionId !== "string" || typeof value.analysisRole !== "string" || value.analysisRoleConfirmed !== true || !["condition", "outcome", "both", "excluded"].includes(String(value.analysisUsage)) || typeof value.analysisMergeAllowed !== "boolean" || typeof value.scaleFingerprint !== "string" || !analysisValueTypes.has(String(value.valueType)))
         throw new Error("context_analysis_value_invalid");
@@ -37,6 +37,7 @@ function validateAnalysisValue(value) {
     for (const name of ["positiveValueKeys", "orderedValueKeys"])
         if (value[name] !== undefined && (!Array.isArray(value[name]) || new Set(value[name]).size !== value[name].length || value[name].some((item) => typeof item !== "string" || !keys.has(item))))
             throw new Error("context_analysis_value_semantics_invalid");
+    validateApplicability(value.applicability);
     if (value.numericMapping !== undefined && (!isRecord(value.numericMapping) || Object.entries(value.numericMapping).some(([key, item]) => !keys.has(key) || typeof item !== "number" || !Number.isFinite(item))))
         throw new Error("context_analysis_value_semantics_invalid");
     if (!isRecord(value.provenance) || !["user_input", "reviewed_ai_extraction", "manual_import"].includes(String(value.provenance.source)) || typeof value.provenance.sourceId !== "string" || value.provenance.userConfirmed !== true || !validTimestamp(value.provenance.recordedAt) || typeof value.provenance.transformVersion !== "string" || !["normal", "sensitive"].includes(String(value.provenance.privacyLevel)))
@@ -44,26 +45,49 @@ function validateAnalysisValue(value) {
     return value;
 }
 const analysisValueTypes = new Set(["boolean", "single_choice", "number", "integer", "scale", "duration_minutes"]);
+const snapshotV2Keys = new Set(["schemaVersion", "contractRevision", "snapshotId", "profileId", "generatedAt", "period", "records", "excluded"]);
+const periodKeys = new Set(["startAt", "endAt", "timezone"]);
+const recordKeys = new Set(["id", "recordedAt", "title", "sourceDocumentId", "values"]);
+const applicabilityKeys = new Set(["condition", "validFrom", "validTo"]);
+function validateApplicability(value) {
+    if (value === undefined)
+        return undefined;
+    if (!Array.isArray(value))
+        throw new Error("context_analysis_applicability_invalid");
+    return value.map((item) => {
+        if (!isRecord(item) || Object.keys(item).some((key) => !applicabilityKeys.has(key)))
+            throw new Error("context_analysis_applicability_invalid");
+        const condition = item.condition === null ? null : item.condition;
+        const validFrom = item.validFrom === null ? null : item.validFrom;
+        const validTo = item.validTo === null ? null : item.validTo;
+        if ((condition !== null && (typeof condition !== "string" || !condition.trim())) || (validFrom !== null && !validTimestamp(validFrom)) || (validTo !== null && !validTimestamp(validTo)) || (validFrom !== null && validTo !== null && Date.parse(validFrom) >= Date.parse(validTo)) || (condition === null && validFrom === null && validTo === null))
+            throw new Error("context_analysis_applicability_invalid");
+        return { condition: condition, validFrom: validFrom, validTo: validTo };
+    });
+}
+function validateAnalysisRecord(value) {
+    if (!isRecord(value) || Object.keys(value).some((key) => !recordKeys.has(key)) || typeof value.id !== "string" || !value.id || !validTimestamp(value.recordedAt) || (value.title !== undefined && typeof value.title !== "string") || (value.title !== undefined && String(value.title).length > 500) || (value.sourceDocumentId !== null && typeof value.sourceDocumentId !== "string") || !Array.isArray(value.values))
+        throw new Error("context_analysis_record_invalid");
+    const seen = new Set();
+    const values = value.values.map((item) => { const validated = validateAnalysisValue(item); const key = `${validated.templateId}:${validated.templateVersionId}:${validated.fieldKey}`; if (seen.has(key))
+        throw new Error("context_analysis_duplicate_field"); seen.add(key); return validated; });
+    return { id: String(value.id), recordedAt: String(value.recordedAt), ...(value.title === undefined ? {} : { title: String(value.title) }), sourceDocumentId: value.sourceDocumentId === null ? null : String(value.sourceDocumentId), values };
+}
 export function validateContextAnalysisSnapshot(value) {
-    if (!isRecord(value) || !validTimestamp(value.generatedAt))
+    if (!isRecord(value) || Object.keys(value).some((key) => !["schemaVersion", "generatedAt", "records", "excluded", "contractRevision", "snapshotId", "profileId", "period"].includes(key)) || !validTimestamp(value.generatedAt))
         throw new Error("context_analysis_snapshot_invalid");
     if (value.schemaVersion === CONTEXT_ANALYSIS_SNAPSHOT_VERSION && Array.isArray(value.records) && isRecord(value.excluded)) {
         for (const record of value.records) {
-            if (!isRecord(record) || typeof record.id !== "string" || !validTimestamp(record.recordedAt) || typeof record.title !== "string" || record.title.length > 500 || !Array.isArray(record.values))
+            if (!isRecord(record) || typeof record.id !== "string" || !validTimestamp(record.recordedAt) || typeof record.title !== "string" || record.title.length > 500 || (record.sourceDocumentId !== null && typeof record.sourceDocumentId !== "string") || !Array.isArray(record.values))
                 throw new Error("context_analysis_snapshot_invalid");
-            for (const item of record.values)
-                if (!isRecord(item) || typeof item.fieldKey !== "string" || !keyPattern.test(item.fieldKey) || typeof item.label !== "string" || typeof item.templateId !== "string" || !("value" in item))
-                    throw new Error("context_analysis_snapshot_invalid");
         }
         return value;
     }
-    if (value.schemaVersion === CONTEXT_ANALYSIS_SNAPSHOT_V2_VERSION && value.contractRevision === PCS_ANALYSIS_CONTRACT_REVISION && typeof value.snapshotId === "string" && typeof value.profileId === "string" && isRecord(value.period) && validTimestamp(value.period.startAt) && validTimestamp(value.period.endAt) && validTimezone(value.period.timezone) && Array.isArray(value.records) && isRecord(value.excluded)) {
-        if (JSON.stringify(value).length > maxJsonBytes)
-            throw new Error("context_analysis_snapshot_too_large");
-        const excludedValid = Object.values(value.excluded).every((item) => typeof item === "number" && Number.isInteger(item) && item >= 0);
-        if (JSON.stringify(value).length > maxJsonBytes || Date.parse(value.period.startAt) >= Date.parse(value.period.endAt) || !excludedValid)
+    if (value.schemaVersion === CONTEXT_ANALYSIS_SNAPSHOT_V2_VERSION && value.contractRevision === PCS_ANALYSIS_CONTRACT_REVISION && typeof value.snapshotId === "string" && typeof value.profileId === "string" && isRecord(value.period) && Object.keys(value.period).every((key) => periodKeys.has(key)) && typeof value.period.startAt === "string" && typeof value.period.endAt === "string" && typeof value.period.timezone === "string" && validTimestamp(value.period.startAt) && validTimestamp(value.period.endAt) && validTimezone(value.period.timezone) && Array.isArray(value.records) && isRecord(value.excluded)) {
+        if (JSON.stringify(value).length > maxJsonBytes || Date.parse(value.period.startAt) >= Date.parse(value.period.endAt) || !Object.values(value.excluded).every((item) => typeof item === "number" && Number.isInteger(item) && item >= 0))
             throw new Error("context_analysis_snapshot_invalid");
-        return value;
+        const records = value.records.map(validateAnalysisRecord);
+        return { ...value, records };
     }
     throw new Error("context_analysis_snapshot_invalid");
 }

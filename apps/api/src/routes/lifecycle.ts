@@ -5,6 +5,8 @@ export type LifecycleRouteContext = { db: DatabaseSync; send: (response: ServerR
 
 type ApplicabilityItem = { valueId: string; applicabilityCondition: string | null; validFrom: string | null; validTo: string | null };
 
+function normalizedCondition(value: ApplicabilityItem): string | null { return value.applicabilityCondition === null ? null : value.applicabilityCondition.trim().toLowerCase(); }
+
 export function rangesOverlap(left: ApplicabilityItem, right: ApplicabilityItem): boolean {
   const leftStart = left.validFrom ? Date.parse(left.validFrom) : Number.NEGATIVE_INFINITY;
   const leftEnd = left.validTo ? Date.parse(left.validTo) : Number.POSITIVE_INFINITY;
@@ -53,11 +55,11 @@ export async function handleLifecycleRoute(request: IncomingMessage, response: S
         for (let other = index + 1; other < keptApplicabilityItems.length; other += 1) {
           const left = keptApplicabilityItems[index];
           const right = keptApplicabilityItems[other];
-          if (left.valueId === right.valueId && left.applicabilityCondition === right.applicabilityCondition && rangesOverlap(left, right)) { send(response, 400, { error: "context_value_applicability_overlap" }); return true; }
+          if (left.valueId !== right.valueId && normalizedCondition(left) === normalizedCondition(right) && rangesOverlap(left, right)) { send(response, 400, { error: "context_value_applicability_overlap" }); return true; }
         }
       }
       const existing = db.prepare("SELECT value_id,applicability_condition,valid_from,valid_to FROM context_value_applicability WHERE value_id IN (" + valueIds.map(() => "?").join(",") + ")").all(...valueIds) as Array<{ value_id: string; applicability_condition: string | null; valid_from: string | null; valid_to: string | null }>;
-      if (keptApplicabilityItems.some((item) => existing.some((row) => row.value_id === item.valueId && row.applicability_condition === item.applicabilityCondition && rangesOverlap(item, { valueId: row.value_id, applicabilityCondition: row.applicability_condition, validFrom: row.valid_from, validTo: row.valid_to })))) { send(response, 400, { error: "context_value_applicability_overlap" }); return true; }
+      if (keptApplicabilityItems.some((item) => existing.some((row) => row.value_id !== item.valueId && normalizedCondition(item) === normalizedCondition({ valueId: row.value_id, applicabilityCondition: row.applicability_condition, validFrom: row.valid_from, validTo: row.valid_to }) && rangesOverlap(item, { valueId: row.value_id, applicabilityCondition: row.applicability_condition, validFrom: row.valid_from, validTo: row.valid_to })))) { send(response, 400, { error: "context_value_applicability_overlap" }); return true; }
     }
     const baseValueId = text(input.baseValueId) || selectedValueIds[0] || (status === "keep_latest" ? String(values[0].id) : "");
     if (status === "resolved_manually" && (!baseValueId || !valueIds.includes(baseValueId) || input.newValue === undefined)) { send(response, 400, { error: "conflict_resolution_invalid" }); return true; }

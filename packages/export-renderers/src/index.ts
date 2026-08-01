@@ -6,7 +6,7 @@ export type ExportTarget =
   | "markdown_manual"
   | "json";
 
-export type RenderField = { label: string; fieldKey?: string; value: unknown; purpose?: string; recordedAt?: string; provenance?: string; confirmationState?: string; lastReviewedAt?: string | null; lastReconfirmedAt?: string | null; reconfirmAfter?: string | null; lifecycle?: string; limitations?: string };
+export type RenderField = { label: string; fieldKey?: string; value: unknown; purpose?: string; recordedAt?: string; provenance?: string; confirmationState?: string; lastReviewedAt?: string | null; lastReconfirmedAt?: string | null; reconfirmAfter?: string | null; lifecycle?: string; limitations?: string; applicability?: Array<{ condition: string | null; validFrom: string | null; validTo: string | null }> };
 
 export function normalizeExportTarget(target: unknown, format: unknown = "markdown"): ExportTarget {
   const value = typeof target === "string" ? target.trim().toLowerCase() : "";
@@ -49,10 +49,10 @@ export function renderTargetWithDetail(fields: RenderField[], target: ExportTarg
   if (target === "json") return JSON.stringify({ schemaVersion: "pcs-context-snapshot-v2", detailLevel, values: Object.fromEntries(fields.map((item) => [item.fieldKey ?? item.label, detailLevel === "short" ? item.value : detailLevel === "standard" ? { value: item.value, purpose: item.purpose, recordedAt: item.recordedAt } : item])) }, null, 2);
   const body = renderTarget(fields, target);
   if (detailLevel === "standard") {
-    const metadata = fields.map((item) => `- ${item.label}: ${item.value === undefined ? "" : valueText(item.value)} (purpose=${item.purpose ?? "unspecified"}; recordedAt=${item.recordedAt ?? "unknown"})`).join("\n");
+    const metadata = fields.map((item) => `- ${item.label}: ${item.value === undefined ? "" : valueText(item.value)} (purpose=${item.purpose ?? "unspecified"}; recordedAt=${item.recordedAt ?? "unknown"}; applicability=${item.applicability?.map((entry) => `${entry.condition ?? "any"} ${entry.validFrom ?? ""}..${entry.validTo ?? ""}`).join(", ") || "none"})`).join("\n");
     return `${body}\n\nApproved metadata:\n${metadata}`;
   }
-  const metadata = fields.map((item) => `- ${item.label}: ${item.value === undefined ? "" : valueText(item.value)}${detailLevel === "detailed" ? ` (purpose=${item.purpose ?? "unspecified"}; recordedAt=${item.recordedAt ?? "unknown"}; provenance=${item.provenance ?? "unknown"}; confirmation=${item.confirmationState ?? "unknown"}; lastReviewedAt=${item.lastReviewedAt ?? "unknown"}; lastReconfirmedAt=${item.lastReconfirmedAt ?? "unknown"}; reconfirmAfter=${item.reconfirmAfter ?? "none"}; lifecycle=${item.lifecycle ?? "unknown"}; limitations=${item.limitations ?? "none"})` : ""}`).join("\n");
+  const metadata = fields.map((item) => `- ${item.label}: ${item.value === undefined ? "" : valueText(item.value)}${detailLevel === "detailed" ? ` (purpose=${item.purpose ?? "unspecified"}; recordedAt=${item.recordedAt ?? "unknown"}; provenance=${item.provenance ?? "unknown"}; confirmation=${item.confirmationState ?? "unknown"}; lastReviewedAt=${item.lastReviewedAt ?? "unknown"}; lastReconfirmedAt=${item.lastReconfirmedAt ?? "unknown"}; reconfirmAfter=${item.reconfirmAfter ?? "none"}; lifecycle=${item.lifecycle ?? "unknown"}; limitations=${item.limitations ?? "none"}; applicability=${item.applicability?.map((entry) => `${entry.condition ?? "any"} ${entry.validFrom ?? ""}..${entry.validTo ?? ""}`).join(", ") || "none"})` : ""}`).join("\n");
   return "Detail level: " + detailLevel + ". Use this user-confirmed context only for the selected purpose.\\n\\n" + metadata;
 }
 

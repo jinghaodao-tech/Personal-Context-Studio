@@ -66,7 +66,7 @@ test("review, purpose-limited sharing, export history, conflicts, reconfirmation
     const bothConflict = (await api("/v1/context-conflicts")).body.items.find((item: any) => item.status === "unresolved");
     assert.ok(bothConflict);
     const bothValueIds = JSON.parse(bothConflict.value_ids_json) as string[];
-    const applicabilityItems = bothValueIds.map((valueId: string, index: number) => ({ valueId, applicabilityCondition: index % 2 === 0 ? "high_energy_context" : "low_energy_context", validFrom: `2026-08-${String(index + 1).padStart(2, "0")}T00:00:00.000Z`, validTo: `2026-09-${String(index + 1).padStart(2, "0")}T00:00:00.000Z` }));
+    const applicabilityItems = bothValueIds.map((valueId: string, index: number) => ({ valueId, applicabilityCondition: `context_${index}`, validFrom: `2026-08-${String(index + 1).padStart(2, "0")}T00:00:00.000Z`, validTo: `2026-09-${String(index + 1).padStart(2, "0")}T00:00:00.000Z` }));
     const bothResolution = await api(`/v1/context-conflicts/${bothConflict.id}/resolve`, "POST", { status: "keep_both", selectedValueIds: bothValueIds, applicabilityItems, reason: "Both values apply in different contexts" });
     assert.equal(bothResolution.response.status, 200);
     assert.equal(bothResolution.body.resolution.applicabilityItems.length, bothValueIds.length);
