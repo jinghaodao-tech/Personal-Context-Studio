@@ -2,7 +2,7 @@
 
 MeTheoryからの `pcs-integration-template-request-v1` は、仮説の検証に必要な観測項目を伝えるための契約です。PCSはsemantic roleを第一キーとして既存の確定済みフィールドを照合し、同じ意味でも値型・範囲・用途・公開設定が違う項目は自動統合しません。
 
-不足項目だけをdraftに作成し、既存項目だけで満たせる場合は新テンプレートを作りません。結果は `exact_match`、`compatible_match`、`needs_user_confirmation`、`missing`、`incompatible` で記録されます。ユーザーのレビューで `approve` した後も、`activate` は別操作です。
+不足項目だけをdraftに作成し、既存項目だけで満たせる場合は新テンプレートを作りません。結果は `exact_match`、`compatible_match`、`needs_user_confirmation`、`missing`、`incompatible` で記録されます。ユーザーのレビューで `approve` した後も、`activate` は別操作です。`activate`はDraft templateの全fieldとanalysis metadataを検証し、同一familyの旧activeをarchiveしてからRequestとTemplateを同時にactive化します。active templateのfield編集は直接更新せず、新しいDraft versionを作成します。
 
 要求は `source_system` と `source_request_id` の組み合わせで冪等化されます。PCSの状態取得は `GET /v1/integration-template-requests/:id` を使い、連携元がPCSのSQLiteを直接読むことはありません。
 

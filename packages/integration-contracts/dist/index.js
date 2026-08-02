@@ -103,6 +103,9 @@ export function validateIntegrationTemplateRequest(value) {
         throw new Error("integration_template_request_invalid");
     if (value.durationDays !== null && value.durationDays !== undefined && (typeof value.durationDays !== "number" || !Number.isInteger(value.durationDays) || value.durationDays < 1 || value.durationDays > 366))
         throw new Error("integration_template_request_invalid");
+    for (const key of ["minimumObservations", "minimumPerGroup"])
+        if (value[key] !== undefined && (typeof value[key] !== "number" || !Number.isInteger(value[key]) || value[key] < 1 || value[key] > 10000))
+            throw new Error("integration_template_request_invalid");
     for (const field of value.requestedFields) {
         if (!isRecord(field) || typeof field.fieldKey !== "string" || !keyPattern.test(field.fieldKey) || typeof field.label !== "string" || !field.label.trim() || typeof field.valueType !== "string" || typeof field.required !== "boolean" || typeof field.reason !== "string" || !field.reason.trim())
             throw new Error("integration_template_request_invalid");

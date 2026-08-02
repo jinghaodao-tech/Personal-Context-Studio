@@ -20,6 +20,103 @@ export type TemplateRouteContext = {
 
 export async function handleTemplateRoute(request: IncomingMessage, response: ServerResponse, url: URL, parts: string[], context: TemplateRouteContext): Promise<boolean> {
   const { db, send, body, text, now, newId, audit, provenance, templateDetail, integrationAuthorized, localAiProvider } = context;
+  if (request.method === "POST" && parts.join("/").match(/^v1\/integration-template-requests\/[^/]+\/(approve|approve_with_edits|reject)$/)) {
+    const action = parts[3];
+    const item = db.prepare("SELECT * FROM integration_template_requests WHERE id=?").get(parts[2]) as any;
+    if (!item) { send(response, 404, { error: "integration_template_request_not_found" }); return true; }
+    if (!["pending_user_review", "partially_matched", "submitted"].includes(item.status)) { send(response, 409, { error: "integration_template_request_not_reviewable" }); return true; }
+    const input = await body(request); const timestamp = now();
+    let history: any[] = []; try { history = JSON.parse(item.review_history_json ?? "[]"); } catch { history = []; }
+    if (action === "reject") { const reason = text(input.reason) || "user_rejected"; history.push({ action, reason, at: timestamp }); db.prepare("UPDATE integration_template_requests SET status='rejected',rejected_reason=?,review_history_json=?,updated_at=? WHERE id=?").run(reason, JSON.stringify(history), timestamp, parts[2]); audit("reject_integration_template_request", { requestId: parts[2] }); send(response, 200, { requestId: parts[2], status: "rejected", rejectedReason: reason }); return true; }
+    const requestInput = validateIntegrationTemplateRequest(JSON.parse(item.payload_json)) as IntegrationTemplateRequestV1;
+    const result = JSON.parse(item.result_json ?? "{}");
+    const edits = action === "approve_with_edits" && Array.isArray(input.edits) ? input.edits as any[] : [];
+    const confirmations = Array.isArray(input.confirmedAnalysisFields) ? input.confirmedAnalysisFields as any[] : [];
+    const applyConfirmed = (templateId: string) => {
+      for (const confirmation of confirmations) {
+        if (typeof confirmation.fieldKey !== "string" || typeof confirmation.analysisRole !== "string" || !["condition", "outcome", "both"].includes(String(confirmation.analysisUsage))) throw new Error("analysis_confirmation_invalid");
+        const requested = requestInput.requestedFields.find((field) => field.fieldKey === confirmation.fieldKey);
+        if (requested && requested.semanticRole && requested.semanticRole !== confirmation.analysisRole) throw new Error("analysis_role_mismatch");
+        if (requested && requested.analysisUsage && requested.analysisUsage !== confirmation.analysisUsage) throw new Error("analysis_usage_mismatch");
+        const changed = db.prepare("UPDATE context_template_fields SET analysis_role=?,analysis_usage=?,analysis_role_confirmed=1,analysis_merge_allowed=? WHERE template_id=? AND field_key=?").run(confirmation.analysisRole, confirmation.analysisUsage, confirmation.analysisMergeAllowed === true ? 1 : 0, templateId, confirmation.fieldKey);
+        if (!changed.changes) throw new Error("analysis_confirmation_field_not_found");
+      }
+    };
+    const applyEdits = (templateId: string) => {
+      const update = db.prepare("UPDATE context_template_fields SET label=?,description=?,minimum_value=?,maximum_value=?,unit=?,sharing_default=?,sensitivity=?,reason=?,question_text=? WHERE template_id=? AND field_key=?");
+      for (const edit of edits) {
+        if (typeof edit.fieldKey !== "string") throw new Error("template_request_edit_invalid");
+        const field = db.prepare("SELECT * FROM context_template_fields WHERE template_id=? AND field_key=?").get(templateId, edit.fieldKey) as any;
+        if (!field) continue;
+        update.run(typeof edit.label === "string" ? edit.label : field.label, typeof edit.description === "string" ? edit.description : field.description, typeof edit.minimum === "number" ? edit.minimum : field.minimum_value, typeof edit.maximum === "number" ? edit.maximum : field.maximum_value, typeof edit.unit === "string" ? edit.unit : field.unit, ["always", "purpose_only", "private", "never"].includes(edit.sharingDefault) ? edit.sharingDefault : field.sharing_default, ["normal", "sensitive", "highly_sensitive"].includes(edit.sensitivity) ? edit.sensitivity : field.sensitivity, typeof edit.reason === "string" ? edit.reason : field.reason, typeof edit.questionText === "string" ? edit.questionText : field.question_text, templateId, edit.fieldKey);
+      }
+    };
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      let templateId = item.template_id as string | null;
+      let templateIds = Array.isArray(result.templateIds) ? result.templateIds.filter((value: unknown): value is string => typeof value === "string") : [];
+      if (templateId) {
+        const draft = db.prepare("SELECT id,status FROM context_templates WHERE id=?").get(templateId) as any;
+        if (!draft || draft.status !== "draft") throw new Error("template_request_draft_required");
+        applyEdits(templateId); applyConfirmed(templateId);
+      } else if (action === "approve_with_edits" && edits.length) {
+        const draftIds: string[] = [];
+        for (const activeId of templateIds) {
+          const active = db.prepare("SELECT * FROM context_templates WHERE id=? AND status='active'").get(activeId) as any;
+          if (!active) throw new Error("active_template_not_found");
+          const draftId = newId("template"); const familyId = active.template_family_id ?? active.id;
+          db.prepare("INSERT INTO context_templates(id,name,description,purpose,status,version,parent_template_id,template_family_id,immutable,source_system,source_reference_id,integration_request_id,provenance_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(draftId, active.name, active.description, requestInput.purpose, "draft", Number(active.version) + 1, active.id, familyId, 0, requestInput.sourceSystem, requestInput.sourceReferenceId, parts[2], JSON.stringify({ sourceSystem: requestInput.sourceSystem, sourceReferenceId: requestInput.sourceReferenceId, integrationRequestId: parts[2], parentTemplateId: active.id }), timestamp, timestamp);
+          const fields = db.prepare("SELECT * FROM context_template_fields WHERE template_id=? ORDER BY display_order").all(active.id) as any[];
+          const insert = db.prepare("INSERT INTO context_template_fields(id,template_id,field_key,label,description,value_type,required,display_order,options_json,minimum_value,maximum_value,unit,analysis_role,analysis_role_confirmed,analysis_usage,analysis_merge_allowed,positive_value_keys_json,ordered_value_keys_json,numeric_mapping_json,reconfirmation_mode,reconfirmation_interval_days,sharing_default,sensitivity,reason,collection_timing,question_text,provenance_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+          for (const field of fields) insert.run(newId("field"), draftId, field.field_key, field.label, field.description, field.value_type, field.required, field.display_order, field.options_json, field.minimum_value, field.maximum_value, field.unit, field.analysis_role, field.analysis_role_confirmed, field.analysis_usage, field.analysis_merge_allowed, field.positive_value_keys_json, field.ordered_value_keys_json, field.numeric_mapping_json, field.reconfirmation_mode, field.reconfirmation_interval_days, field.sharing_default, field.sensitivity, field.reason, field.collection_timing, field.question_text, field.provenance_json);
+          applyEdits(draftId); applyConfirmed(draftId); draftIds.push(draftId);
+        }
+        templateIds = draftIds; templateId = draftIds[0] ?? null; result.templateIds = draftIds;
+      }
+      if (Array.isArray(result.incompatibleFields) && result.incompatibleFields.length) throw new Error("unresolved_incompatible_fields");
+      history.push({ action, editCount: edits.length, confirmedAnalysisFieldCount: confirmations.length, at: timestamp });
+      db.prepare("UPDATE integration_template_requests SET status='approved',template_id=?,result_json=?,review_history_json=?,updated_at=? WHERE id=?").run(templateId, JSON.stringify(result), JSON.stringify(history), timestamp, parts[2]);
+      db.exec("COMMIT");
+      provenance({ subjectType: "template", subjectId: templateId ?? parts[2], eventType: "review_approved", actorType: "user", sourceRef: parts[2], metadata: { action, templateIds, confirmedAnalysisFieldCount: confirmations.length } });
+      send(response, 200, { requestId: parts[2], status: "approved", templateId, templateIds, editCount: edits.length, confirmedAnalysisFieldCount: confirmations.length, note: "Activation remains a separate explicit step." });
+    } catch (error) { try { db.exec("ROLLBACK"); } catch {} const code = error instanceof Error ? error.message : "template_review_failed"; send(response, 409, { error: code }); }
+    return true;
+  }
+  if (request.method === "POST" && parts.join("/") === `v1/integration-template-requests/${parts[2]}/activate`) {
+    const item = db.prepare("SELECT * FROM integration_template_requests WHERE id=?").get(parts[2]) as any;
+    if (!item || item.status !== "approved") { send(response, 409, { error: "integration_template_request_not_ready_for_activation" }); return true; }
+    const requestInput = validateIntegrationTemplateRequest(JSON.parse(item.payload_json)) as IntegrationTemplateRequestV1; const result = JSON.parse(item.result_json ?? "{}");
+    let history: any[] = []; try { history = JSON.parse(item.review_history_json ?? "[]"); } catch { history = []; }
+    if (Array.isArray(result.incompatibleFields) && result.incompatibleFields.length) { send(response, 409, { error: "unresolved_incompatible_fields" }); return true; }
+    const templateIds: string[] = Array.isArray(result.templateIds) ? result.templateIds.filter((value: unknown): value is string => typeof value === "string") : [];
+    const draftIds = item.template_id ? [String(item.template_id)] : templateIds.filter((templateId) => { const row = db.prepare("SELECT status FROM context_templates WHERE id=?").get(templateId) as any; return row?.status === "draft"; });
+    const activeIds = templateIds.filter((templateId) => !draftIds.includes(templateId));
+    if (!draftIds.length && !activeIds.length) { send(response, 409, { error: "integration_template_request_template_missing" }); return true; }
+    const validateAnalysis = (templateId: string) => {
+      const template = db.prepare("SELECT * FROM context_templates WHERE id=?").get(templateId) as any;
+      if (!template || template.purpose !== requestInput.purpose) throw new Error("template_purpose_mismatch");
+      const fields = db.prepare("SELECT * FROM context_template_fields WHERE template_id=? ORDER BY display_order").all(templateId) as any[];
+      if (!fields.length) throw new Error("template_fields_required");
+      for (const field of fields) {
+        validateField({ fieldKey: field.field_key, label: field.label, description: field.description, valueType: field.value_type, required: Boolean(field.required), displayOrder: field.display_order, options: JSON.parse(field.options_json ?? "[]"), minimum: field.minimum_value ?? undefined, maximum: field.maximum_value ?? undefined, unit: field.unit ?? undefined, analysisRole: field.analysis_role ?? undefined, analysisRoleConfirmed: Boolean(field.analysis_role_confirmed), analysisUsage: field.analysis_usage, analysisMergeAllowed: Boolean(field.analysis_merge_allowed), positiveValueKeys: JSON.parse(field.positive_value_keys_json ?? "[]"), orderedValueKeys: JSON.parse(field.ordered_value_keys_json ?? "[]"), numericMapping: JSON.parse(field.numeric_mapping_json ?? "{}"), sharingDefault: field.sharing_default, sensitivity: field.sensitivity, reason: field.reason, reconfirmationMode: field.reconfirmation_mode, reconfirmationIntervalDays: field.reconfirmation_interval_days });
+        if (field.analysis_usage !== "excluded" && (field.analysis_role_confirmed !== 1 || field.analysis_merge_allowed !== 1)) throw new Error("analysis_confirmation_required");
+      }
+      return template;
+    };
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const timestamp = now(); const activated: string[] = [];
+      for (const templateId of draftIds) { const template = validateAnalysis(templateId); const familyId = template.template_family_id ?? template.id; db.prepare("UPDATE context_templates SET status='archived',updated_at=? WHERE template_family_id=? AND status='active'").run(timestamp, familyId); db.prepare("UPDATE context_templates SET status='active',immutable=1,template_family_id=?,source_system=?,source_reference_id=?,integration_request_id=?,provenance_json=?,updated_at=? WHERE id=? AND status='draft'").run(familyId, requestInput.sourceSystem, requestInput.sourceReferenceId, parts[2], JSON.stringify({ sourceSystem: requestInput.sourceSystem, sourceReferenceId: requestInput.sourceReferenceId, integrationRequestId: parts[2], purpose: requestInput.purpose }), timestamp, templateId); activated.push(templateId); }
+      for (const templateId of activeIds) validateAnalysis(templateId);
+      history.push({ action: "activate", templateIds: [...activated, ...activeIds], at: timestamp });
+      const activatedAt = timestamp; db.prepare("UPDATE integration_template_requests SET status='activated',activated_at=?,review_history_json=?,updated_at=? WHERE id=?").run(activatedAt, JSON.stringify(history), timestamp, parts[2]);
+      db.exec("COMMIT");
+      provenance({ subjectType: "template", subjectId: activated[0] ?? activeIds[0] ?? parts[2], eventType: "activated", actorType: "user", sourceRef: parts[2], metadata: { requestId: parts[2], templateIds: [...activated, ...activeIds], purpose: requestInput.purpose } });
+      audit("activate_integration_template_request", { requestId: parts[2], templateIds: [...activated, ...activeIds] });
+      send(response, 200, { requestId: parts[2], status: "activated", activatedAt, templateIds: [...activated, ...activeIds] });
+    } catch (error) { try { db.exec("ROLLBACK"); } catch {} send(response, 409, { error: error instanceof Error ? error.message : "template_activation_failed" }); }
+    return true;
+  }
   if (request.method === "GET" && url.pathname === "/v1/integration-template-requests") { send(response, 200, { items: db.prepare("SELECT id,source_system,source_request_id,source_reference_id,payload_json,status,template_id,result_json,rejected_reason,activated_at,created_at,updated_at FROM integration_template_requests ORDER BY created_at DESC").all() }); return true; }
   if (request.method === "GET" && parts.join("/").match(/^v1\/integration-template-requests\/[^/]+$/)) { const item = db.prepare("SELECT id,source_system,source_request_id,source_reference_id,payload_json,status,template_id,result_json,rejected_reason,activated_at,review_history_json,created_at,updated_at FROM integration_template_requests WHERE id=?").get(parts[2]) as any; if (!item) { send(response, 404, { error: "integration_template_request_not_found" }); return true; } send(response, 200, { request: { ...item, payload: JSON.parse(item.payload_json), result: JSON.parse(item.result_json ?? "{}"), reviewHistory: JSON.parse(item.review_history_json ?? "[]"), activatedAt: item.activated_at ?? null, rejectedReason: item.rejected_reason ?? null } }); return true; }
   if (request.method === "POST" && parts.join("/") === `v1/integration-template-requests/${parts[2]}/resolve`) { const item = db.prepare("SELECT id,status,result_json FROM integration_template_requests WHERE id=?").get(parts[2]) as any; if (!item || !["pending_user_review", "partially_matched"].includes(item.status)) { send(response, 409, { error: "integration_template_request_not_reviewable" }); return true; } const input = await body(request); if (input.decision === "reject") { const reason = text(input.reason) || "incompatible_match_rejected"; db.prepare("UPDATE integration_template_requests SET status='rejected',rejected_reason=?,updated_at=? WHERE id=?").run(reason, now(), parts[2]); send(response, 200, { requestId: parts[2], status: "rejected", rejectedReason: reason }); return true; } if (input.decision !== "use_existing" || typeof input.requestedFieldKey !== "string" || typeof input.existingFieldKey !== "string") { send(response, 400, { error: "integration_template_match_decision_invalid" }); return true; } const existing = db.prepare("SELECT f.field_key,f.template_id FROM context_template_fields f JOIN context_templates t ON t.id=f.template_id WHERE t.status='active' AND f.field_key=?").get(input.existingFieldKey) as any; if (!existing) { send(response, 404, { error: "integration_template_match_target_not_found" }); return true; } const result = JSON.parse(item.result_json ?? "{}"); const incompatible = Array.isArray(result.incompatibleFields) ? result.incompatibleFields : []; const target = incompatible.find((match: any) => match.requestedFieldKey === input.requestedFieldKey && match.existingFieldKeys.includes(input.existingFieldKey)); if (!target) { send(response, 400, { error: "integration_template_match_target_invalid" }); return true; } result.incompatibleFields = incompatible.filter((match: any) => match !== target); result.matchedFields = [...(Array.isArray(result.matchedFields) ? result.matchedFields : []), { requestedFieldKey: input.requestedFieldKey, kind: "needs_user_confirmation", existingFieldKeys: [input.existingFieldKey], reasons: ["user_selected_existing_field"] }]; result.templateIds = [...new Set([...(Array.isArray(result.templateIds) ? result.templateIds : []), String(existing.template_id)])]; result.userDecisions = [...(Array.isArray(result.userDecisions) ? result.userDecisions : []), { requestedFieldKey: input.requestedFieldKey, existingFieldKey: input.existingFieldKey, decision: input.decision, at: now() }]; db.prepare("UPDATE integration_template_requests SET result_json=?,updated_at=? WHERE id=?").run(JSON.stringify(result), now(), parts[2]); send(response, 200, { requestId: parts[2], status: "pending_user_review", result, requiresUserDecision: result.incompatibleFields.length > 0 }); return true; }
@@ -51,7 +148,7 @@ export async function handleTemplateRoute(request: IncomingMessage, response: Se
     if (!requestedFields.length) { send(response, 400, { error: "integration_template_fields_required" }); return true; }
     const templateId = newId("template"), timestamp = now(); db.exec("BEGIN IMMEDIATE");
     try {
-      db.prepare("INSERT INTO context_templates(id,name,description,purpose,status,version,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)").run(templateId, requestInput.title, requestInput.purpose, `integration_${requestInput.sourceSystem}`, "draft", 1, timestamp, timestamp);
+      db.prepare("INSERT INTO context_templates(id,name,description,purpose,status,version,source_system,source_reference_id,integration_request_id,provenance_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(templateId, requestInput.title, requestInput.title, requestInput.purpose, "draft", 1, requestInput.sourceSystem, requestInput.sourceReferenceId, parts[2], JSON.stringify({ sourceSystem: requestInput.sourceSystem, sourceReferenceId: requestInput.sourceReferenceId, integrationRequestId: parts[2], purpose: requestInput.purpose }), timestamp, timestamp);
       const insert = db.prepare("INSERT INTO context_template_fields(id,template_id,field_key,label,description,value_type,required,display_order,options_json,minimum_value,maximum_value,unit,analysis_role,analysis_role_confirmed,analysis_usage,analysis_merge_allowed,positive_value_keys_json,ordered_value_keys_json,numeric_mapping_json,collection_timing,question_text,provenance_json,sharing_default,sensitivity,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
       for (const field of missingFields) insert.run(newId("field"), templateId, field.fieldKey, field.label, field.description ?? "", field.valueType, field.required ? 1 : 0, field.displayOrder, JSON.stringify(field.options ?? []), field.minimum ?? null, field.maximum ?? null, field.unit ?? null, field.analysisRole ?? null, 0, field.analysisUsage ?? "excluded", 0, JSON.stringify(field.positiveValueKeys ?? []), JSON.stringify(field.orderedValueKeys ?? []), JSON.stringify(field.numericMapping ?? {}), (field as any).collectionTiming ?? null, (field as any).questionText ?? field.description ?? "", JSON.stringify({ sourceSystem: requestInput.sourceSystem, sourceReferenceId: requestInput.sourceReferenceId, requestId: requestInput.id, purpose: requestInput.purpose }), field.sharingDefault, field.sensitivity, field.reason);
       result.templateIds.push(templateId); db.prepare("UPDATE integration_template_requests SET status='partially_matched',template_id=?,result_json=?,updated_at=? WHERE id=?").run(templateId, JSON.stringify(result), timestamp, parts[2]); db.exec("COMMIT");

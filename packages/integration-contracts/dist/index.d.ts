@@ -101,6 +101,8 @@ export type IntegrationTemplateRequestV1 = {
     title: string;
     purpose: string;
     durationDays: number | null;
+    minimumObservations?: number;
+    minimumPerGroup?: number;
     requestedFields: Array<{
         fieldKey: string;
         label: string;
