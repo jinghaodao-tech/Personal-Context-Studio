@@ -18,6 +18,12 @@ test("dashboard opens and exposes the management navigation in a real browser", 
     await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "domcontentloaded" });
     assert.match(await page.title(), /Personal Context Studio/);
     assert.match(await page.locator("body").innerText(), /Review/);
+    await page.locator('#tabs button[data-tab="templates"]').click();
+    await page.waitForTimeout(20);
+    await page.locator('#content button.active').first().click();
+    await page.waitForTimeout(20);
+    assert.match(await page.locator('#dialog').innerText(), /AI|テンプレート/);
+    await page.locator('#dialog button').first().click();
     await page.locator('#tabs button[data-tab="privacy"]').click({ force: true });
     assert.match(await page.locator("body").innerText(), /Privacy/);
     for (const [tab, heading] of [["sharing", "共有 / Export"], ["integration", "連携"], ["backup", "バックアップ"], ["audit", "監査"]] as const) {

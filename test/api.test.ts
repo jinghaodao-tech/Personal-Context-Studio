@@ -54,6 +54,18 @@ test("local documents feed reviewed analysis snapshots and generic integration t
     assert.match((await api(`/v1/documents/${document.body.id}/excerpt?maxCharacters=200`)).body.excerpt, /energy/);
     const template = await api("/v1/context-templates", "POST", { name: "Daily signal", purpose: "self_understanding", fields: [{ fieldKey: "energy", label: "Energy", valueType: "number", required: true, displayOrder: 1, analysisRole: "outcome", analysisRoleConfirmed: true, analysisUsage: "outcome", sharingDefault: "purpose_only", sensitivity: "normal", reason: "Compare energy" }] });
     const templateId = template.body.item.id; await api(`/v1/context-templates/${templateId}/activate`, "POST");
+    const templatePreview = await api(`/v1/documents/${document.body.id}/template-preview`, "POST", { templateId });
+    assert.equal(templatePreview.response.status, 200); assert.match(templatePreview.body.markdown, /Energy/); assert.equal(templatePreview.body.alreadyApplied, false);
+    const rejectedApply = await api(`/v1/documents/${document.body.id}/template-apply`, "POST", { templateId, contentHash: templatePreview.body.contentHash, approved: false });
+    assert.equal(rejectedApply.response.status, 400);
+    const appliedTemplate = await api(`/v1/documents/${document.body.id}/template-apply`, "POST", { templateId, contentHash: templatePreview.body.contentHash, approved: true });
+    assert.equal(appliedTemplate.response.status, 200); assert.equal(appliedTemplate.body.applied, true);
+    const repeatedApply = await api(`/v1/documents/${document.body.id}/template-apply`, "POST", { templateId, contentHash: templatePreview.body.contentHash, approved: true });
+    assert.equal(repeatedApply.response.status, 200); assert.equal(repeatedApply.body.alreadyApplied, true);
+    const appendClient = await api("/v1/integration-clients", "POST", { name: "Markdown writer", permissions: ["append_markdown_template"] });
+    const appendHeaders = { "x-pcs-client-id": appendClient.body.id, authorization: `Bearer ${appendClient.body.token}` };
+    const integrationApply = await api(`/v1/integration/documents/${document.body.id}/template-apply`, "POST", { templateId, contentHash: repeatedApply.body.contentHash, approved: true }, appendHeaders);
+    assert.equal(integrationApply.response.status, 200); assert.equal(integrationApply.body.alreadyApplied, true);
     const authorizationBefore = await api("/v1/privacy/external-ai/authorize-extraction", "POST", { documentId: document.body.id, templateId, providerId: "manual", destinationHost: "chatgpt.com" });
     assert.equal(authorizationBefore.body.allowed, false);
     assert.deepEqual(authorizationBefore.body.missing.sort(), ["document", "field:energy"]);
@@ -85,8 +97,27 @@ test("local documents feed reviewed analysis snapshots and generic integration t
     const requestPayload = { schemaVersion: "pcs-integration-template-request-v1", id: "request_focus_1", sourceSystem: "workbench", sourceReferenceId: "focus_1", title: "Focus journal", purpose: "Check focus conditions", durationDays: 14, requestedFields: [{ fieldKey: "focus", label: "Focus", valueType: "number", required: true, reason: "Compare conditions" }], createdAt: "2026-07-01T00:00:00.000Z" };
     assert.equal((await api("/v1/integration-template-requests", "POST", requestPayload)).response.status, 401);
     const request = await api("/v1/integration-template-requests", "POST", requestPayload, integrationHeaders);
-    assert.equal(request.response.status, 201); const createdTemplate = await api(`/v1/integration-template-requests/${request.body.id}/create-template`, "POST"); assert.equal(createdTemplate.response.status, 201); assert.equal(createdTemplate.body.template.status, "draft");
+    const duplicateRequest = await api("/v1/integration-template-requests", "POST", requestPayload, integrationHeaders);
+    assert.equal(duplicateRequest.response.status, 200); assert.equal(duplicateRequest.body.duplicate, true);
+    assert.equal(request.response.status, 201); assert.equal(request.body.status, "pending_user_review"); const createdTemplate = await api(`/v1/integration-template-requests/${request.body.id}/create-template`, "POST"); assert.equal(createdTemplate.response.status, 201); assert.equal(createdTemplate.body.template.status, "draft"); const duplicateTemplate = await api(`/v1/integration-template-requests/${request.body.id}/create-template`, "POST"); assert.equal(duplicateTemplate.response.status, 200); const edited = await api(`/v1/integration-template-requests/${request.body.id}/approve_with_edits`, "POST", { edits: [{ fieldKey: "focus", questionText: "修正した質問" }] }); assert.equal(edited.body.status, "approved"); const requestDetail = await api(`/v1/integration-template-requests/${request.body.id}`, "GET"); assert.equal(requestDetail.body.request.reviewHistory.length, 1); const activated = await api(`/v1/integration-template-requests/${request.body.id}/activate`, "POST", { }); assert.equal(activated.body.status, "activated");
     assert.equal((await api(`/v1/context-templates/${createdTemplate.body.template.id}/archive`, "POST")).body.archived, true);
+    const reuseRequest = await api("/v1/integration-template-requests", "POST", { schemaVersion: "pcs-integration-template-request-v1", id: "request_reuse_1", sourceSystem: "metheory", sourceReferenceId: "hypothesis_1", title: "Reuse existing outcome", purpose: "self_understanding", durationDays: 7, requestedFields: [{ fieldKey: "energy_level", label: "Energy", valueType: "number", semanticRole: "outcome", analysisUsage: "outcome", sharingDefault: "purpose_only", sensitivity: "normal", required: true, reason: "Compare outcome" }], createdAt: "2026-07-01T00:00:00.000Z" }, integrationHeaders);
+    assert.equal(reuseRequest.response.status, 201);
+    const reused = await api(`/v1/integration-template-requests/${reuseRequest.body.id}/create-template`, "POST");
+    assert.equal(reused.response.status, 200); assert.equal(reused.body.reusedOnly, true); assert.deepEqual(reused.body.templateIds.length, 1);
+    const reuseEdited = await api(`/v1/integration-template-requests/${reuseRequest.body.id}/approve_with_edits`, "POST", { edits: [{ fieldKey: "energy", questionText: "再利用項目の確認質問" }] });
+    assert.equal(reuseEdited.body.status, "approved");
+    assert.equal((await api(`/v1/context-templates/${templateId}`, "GET")).body.item.fields.find((field: any) => field.field_key === "energy").question_text, "再利用項目の確認質問");
+    assert.equal((await api(`/v1/integration-template-requests/${reuseRequest.body.id}/activate`, "POST")).body.status, "activated");
+    const incompatibleRequest = await api("/v1/integration-template-requests", "POST", { schemaVersion: "pcs-integration-template-request-v1", id: "request_incompatible_1", sourceSystem: "metheory", sourceReferenceId: "hypothesis_2", title: "Incompatible request", purpose: "self_understanding", durationDays: 7, requestedFields: [{ fieldKey: "energy_text", label: "Energy text", valueType: "text", semanticRole: "outcome", analysisUsage: "outcome", sharingDefault: "purpose_only", sensitivity: "normal", required: true, reason: "Intentional mismatch" }], createdAt: "2026-07-01T00:00:00.000Z" }, integrationHeaders);
+    const incompatibleResult = await api(`/v1/integration-template-requests/${incompatibleRequest.body.id}/create-template`, "POST");
+    assert.equal(incompatibleResult.body.reusedOnly, false); assert.equal(incompatibleResult.body.requiresUserDecision, true); assert.equal(incompatibleResult.body.result.incompatibleFields.length, 1);
+    const resolved = await api(`/v1/integration-template-requests/${incompatibleRequest.body.id}/resolve`, "POST", { decision: "use_existing", requestedFieldKey: "energy_text", existingFieldKey: "energy" });
+    assert.equal(resolved.body.requiresUserDecision, false); assert.equal((await api(`/v1/integration-template-requests/${incompatibleRequest.body.id}/approve`, "POST")).body.status, "approved");
+    assert.equal((await api(`/v1/integration-template-requests/${incompatibleRequest.body.id}/activate`, "POST")).body.status, "activated");
+    const rejectRequest = await api("/v1/integration-template-requests", "POST", { ...requestPayload, id: "request_reject_1", sourceReferenceId: "reject_1" }, integrationHeaders);
+    const rejected = await api(`/v1/integration-template-requests/${rejectRequest.body.id}/reject`, "POST", { reason: "Purpose is not applicable" });
+    assert.equal(rejected.body.status, "rejected"); assert.equal(rejected.body.rejectedReason, "Purpose is not applicable");
   } finally { child.kill(); await new Promise((resolve) => setTimeout(resolve, 100)); rmSync(directory, { recursive: true, force: true }); }
 });
 

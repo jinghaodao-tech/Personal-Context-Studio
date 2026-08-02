@@ -2,7 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 
-export const integrationPermissions = ["read_snapshot", "submit_template_request", "submit_import"] as const;
+export const integrationPermissions = ["read_snapshot", "submit_template_request", "submit_import", "append_markdown_template"] as const;
 export type IntegrationPermission = typeof integrationPermissions[number];
 
 export function hashIntegrationToken(value: string) {
@@ -23,7 +23,8 @@ export function managementAuthorized(request: IncomingMessage, configuredToken: 
 export function isIntegrationRequest(method: string | undefined, pathname: string) {
   return (method === "GET" && pathname === "/v1/context/analysis-snapshot")
     || (method === "POST" && pathname === "/v1/integration-template-requests")
-    || (method === "POST" && pathname === "/v1/integration-imports");
+    || (method === "POST" && pathname === "/v1/integration-imports")
+    || (method === "POST" && pathname.startsWith("/v1/integration/documents/") && pathname.endsWith("/template-apply"));
 }
 
 export function integrationAuthorized(db: DatabaseSync, request: IncomingMessage, permission: IntegrationPermission) {

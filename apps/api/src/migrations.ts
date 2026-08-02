@@ -143,6 +143,23 @@ export function applyMigrations(db: DatabaseSync, schemaSql: string) {
     { version: "015_context_value_applicability", apply: () => {
       db.exec("CREATE TABLE IF NOT EXISTS context_value_applicability (id TEXT PRIMARY KEY, value_id TEXT NOT NULL REFERENCES context_values(id) ON DELETE CASCADE, conflict_id TEXT NOT NULL REFERENCES context_conflicts(id) ON DELETE CASCADE, applicability_condition TEXT, valid_from TEXT, valid_to TEXT, created_at TEXT NOT NULL, CHECK(applicability_condition IS NOT NULL OR valid_from IS NOT NULL OR valid_to IS NOT NULL)) STRICT; CREATE INDEX IF NOT EXISTS context_value_applicability_conflict_idx ON context_value_applicability(conflict_id); CREATE INDEX IF NOT EXISTS context_value_applicability_value_idx ON context_value_applicability(value_id);");
     } },
+    { version: "016_integration_template_review_states", apply: () => {
+      const table = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='integration_template_requests'").get() as { sql?: string } | undefined;
+      if (table?.sql && table.sql.includes("'pending','template_created','rejected'")) {
+        db.exec("ALTER TABLE integration_template_requests RENAME TO integration_template_requests_legacy");
+        db.exec(`CREATE TABLE integration_template_requests (id TEXT PRIMARY KEY, source_system TEXT NOT NULL, source_request_id TEXT NOT NULL, source_reference_id TEXT, payload_json TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN('draft','submitted','pending_user_review','partially_matched','approved','rejected','activated','failed')), template_id TEXT, result_json TEXT NOT NULL DEFAULT '{}', rejected_reason TEXT, activated_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(source_system,source_request_id)) STRICT`);
+        db.exec("INSERT INTO integration_template_requests(id,source_system,source_request_id,source_reference_id,payload_json,status,template_id,created_at,updated_at) SELECT id,source_system,source_request_id,source_reference_id,payload_json,CASE status WHEN 'template_created' THEN 'partially_matched' WHEN 'rejected' THEN 'rejected' ELSE 'pending_user_review' END,template_id,created_at,updated_at FROM integration_template_requests_legacy");
+        db.exec("DROP TABLE integration_template_requests_legacy");
+      }
+      db.exec("CREATE INDEX IF NOT EXISTS integration_template_requests_status_idx ON integration_template_requests(status,created_at DESC)");
+    } },
+    { version: "017_template_request_provenance_and_timing", apply: () => {
+      const addColumn = (table: string, column: string, definition: string) => { const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>; if (!columns.some((item) => item.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`); };
+      addColumn("context_template_fields", "collection_timing", "TEXT");
+      addColumn("context_template_fields", "question_text", "TEXT NOT NULL DEFAULT ''");
+      addColumn("context_template_fields", "provenance_json", "TEXT NOT NULL DEFAULT '{}'");
+      addColumn("integration_template_requests", "review_history_json", "TEXT NOT NULL DEFAULT '[]'");
+    } },
   ];
   const applied = new Set((db.prepare("SELECT version FROM schema_migrations").all() as Array<{ version: string }>).map((row) => row.version));
   for (const migration of migrations) {
