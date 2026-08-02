@@ -160,6 +160,14 @@ export function applyMigrations(db: DatabaseSync, schemaSql: string) {
       addColumn("context_template_fields", "provenance_json", "TEXT NOT NULL DEFAULT '{}'");
       addColumn("integration_template_requests", "review_history_json", "TEXT NOT NULL DEFAULT '[]'");
     } },
+    { version: "018_template_request_source_provenance", apply: () => {
+      const addColumn = (table: string, column: string, definition: string) => { const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>; if (!columns.some((item) => item.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`); };
+      addColumn("context_templates", "source_system", "TEXT");
+      addColumn("context_templates", "source_reference_id", "TEXT");
+      addColumn("context_templates", "integration_request_id", "TEXT");
+      addColumn("context_templates", "provenance_json", "TEXT NOT NULL DEFAULT '{}'");
+      db.exec("CREATE INDEX IF NOT EXISTS context_templates_source_idx ON context_templates(source_system,source_reference_id); CREATE INDEX IF NOT EXISTS context_templates_request_idx ON context_templates(integration_request_id);");
+    } },
   ];
   const applied = new Set((db.prepare("SELECT version FROM schema_migrations").all() as Array<{ version: string }>).map((row) => row.version));
   for (const migration of migrations) {
