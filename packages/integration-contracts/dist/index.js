@@ -109,6 +109,31 @@ export function validateIntegrationTemplateRequest(value) {
         if (field.options !== undefined && (!Array.isArray(field.options) || field.options.some((option) => !isRecord(option) || typeof option.key !== "string" || typeof option.label !== "string")))
             throw new Error("integration_template_request_invalid");
     }
+    for (const field of value.requestedFields) {
+        const item = field;
+        if (item.semanticRole !== undefined && (typeof item.semanticRole !== "string" || !keyPattern.test(item.semanticRole)))
+            throw new Error("integration_template_request_invalid");
+        if (item.analysisUsage !== undefined && !["condition", "outcome", "both"].includes(String(item.analysisUsage)))
+            throw new Error("integration_template_request_invalid");
+        if (item.collectionTiming !== undefined && !["task_start", "before_activity", "during_activity", "after_activity", "daily", "follow_up"].includes(String(item.collectionTiming)))
+            throw new Error("integration_template_request_invalid");
+        if (item.questionText !== undefined && (typeof item.questionText !== "string" || item.questionText.length > 500))
+            throw new Error("integration_template_request_invalid");
+        if (item.sharingDefault !== undefined && !["always", "purpose_only", "private", "never"].includes(String(item.sharingDefault)))
+            throw new Error("integration_template_request_invalid");
+        if (item.sensitivity !== undefined && !["normal", "sensitive", "highly_sensitive"].includes(String(item.sensitivity)))
+            throw new Error("integration_template_request_invalid");
+        for (const key of ["minimum", "maximum"])
+            if (item[key] !== undefined && (typeof item[key] !== "number" || !Number.isFinite(item[key])))
+                throw new Error("integration_template_request_invalid");
+        if (item.minimum !== undefined && item.maximum !== undefined && Number(item.minimum) > Number(item.maximum))
+            throw new Error("integration_template_request_invalid");
+        for (const key of ["positiveValueKeys", "orderedValueKeys"])
+            if (item[key] !== undefined && (!Array.isArray(item[key]) || item[key].some((entry) => typeof entry !== "string")))
+                throw new Error("integration_template_request_invalid");
+        if (item.numericMapping !== undefined && (!isRecord(item.numericMapping) || Object.values(item.numericMapping).some((entry) => typeof entry !== "number" || !Number.isFinite(entry))))
+            throw new Error("integration_template_request_invalid");
+    }
     if (JSON.stringify(value).length > maxJsonBytes)
         throw new Error("integration_template_request_too_large");
     return value;

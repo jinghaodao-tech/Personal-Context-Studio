@@ -1,6 +1,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { DatabaseSync } from "node:sqlite";
+import { writeFileSync } from "node:fs";
 import { validateIntegrationImport } from "../../../../packages/integration-contracts/src/index.ts";
+import { renderMarkdownTemplate, templateMarker } from "../../../../packages/documents/src/template.ts";
 
 export type ContentRouteContext = {
   db: DatabaseSync;
@@ -12,15 +14,16 @@ export type ContentRouteContext = {
   audit: (action: string, summary: unknown) => void;
   provenance: (input: any) => void;
   notesRoot: string;
-  readMarkdownSnapshot: (notesRoot: string, filePath: string) => { relativePath: string; contentHash: string; content: string };
+  readMarkdownSnapshot: (notesRoot: string, filePath: string) => { absolutePath: string; relativePath: string; contentHash: string; content: string };
   excerpt: (content: string, maxCharacters: number) => string;
   ftsTerms: (query: string) => string;
   upsertDocument: (filePath: string) => unknown;
   integrationPermissions: readonly string[];
-  integrationAuthorized: (db: DatabaseSync, request: IncomingMessage, permission: "read_snapshot" | "submit_template_request" | "submit_import") => boolean;
+  integrationAuthorized: (db: DatabaseSync, request: IncomingMessage, permission: "read_snapshot" | "submit_template_request" | "submit_import" | "append_markdown_template") => boolean;
   hashIntegrationToken: (token: string) => string;
   randomToken: () => string;
   decodedJson: (row: { value_json: string }) => unknown;
+  templateDetail: (id: string) => any;
 };
 
 export async function handleContentRoute(
@@ -30,7 +33,7 @@ export async function handleContentRoute(
   parts: string[],
   context: ContentRouteContext,
 ): Promise<boolean> {
-  const { db, send, body, text, now, newId, audit, provenance, notesRoot, readMarkdownSnapshot, excerpt, ftsTerms, upsertDocument, integrationPermissions, integrationAuthorized, hashIntegrationToken, randomToken, decodedJson } = context;
+  const { db, send, body, text, now, newId, audit, provenance, notesRoot, readMarkdownSnapshot, excerpt, ftsTerms, upsertDocument, integrationPermissions, integrationAuthorized, hashIntegrationToken, randomToken, decodedJson, templateDetail } = context;
 
   if (request.method === "GET" && url.pathname === "/v1/integration-clients") {
     const items = db.prepare("SELECT id,name,permissions_json,is_active,created_at,updated_at FROM integration_clients ORDER BY created_at DESC").all() as any[];
@@ -58,7 +61,43 @@ export async function handleContentRoute(
   if (request.method === "POST" && url.pathname === "/v1/documents") { const input = await body(request); const filePath = text(input.filePath); if (!filePath) { send(response, 400, { error: "document_path_required" }); return true; } const result = upsertDocument(filePath) as any; send(response, result.created ? 201 : 200, result); return true; }
   if (request.method === "GET" && parts[0] === "v1" && parts[1] === "documents" && parts.length === 3) { const item = db.prepare("SELECT * FROM context_documents WHERE id=? AND archived_at IS NULL").get(parts[2]); send(response, item ? 200 : 404, item ? { item } : { error: "document_not_found" }); return true; }
   if (request.method === "GET" && parts[0] === "v1" && parts[1] === "documents" && parts[2] && parts[3] === "excerpt") { const item = db.prepare("SELECT file_path FROM context_documents WHERE id=? AND archived_at IS NULL").get(parts[2]) as any; if (!item) { send(response, 404, { error: "document_not_found" }); return true; } const snapshot = readMarkdownSnapshot(notesRoot, item.file_path); send(response, 200, { documentId: parts[2], filePath: snapshot.relativePath, contentHash: snapshot.contentHash, excerpt: excerpt(snapshot.content, Number(url.searchParams.get("maxCharacters") ?? 2000)) }); return true; }
-  if (request.method === "DELETE" && parts[0] === "v1" && parts[1] === "documents" && parts[2]) { const timestamp = now(); db.exec("BEGIN IMMEDIATE"); try { const result = db.prepare("UPDATE context_documents SET archived_at=?,updated_at=? WHERE id=? AND archived_at IS NULL").run(timestamp, timestamp, parts[2]); db.prepare("DELETE FROM context_document_fts WHERE document_id=?").run(parts[2]); db.exec("COMMIT"); send(response, result.changes ? 200 : 404, result.changes ? { archived: true } : { error: "document_not_found" }); } catch (error) { db.exec("ROLLBACK"); throw error; } return true; }
+  if (request.method === "POST" && parts[0] === "v1" && parts[1] === "integration" && parts[2] === "documents" && parts[3] && parts[4] === "template-apply") {
+    if (!integrationAuthorized(db, request, "append_markdown_template")) { send(response, 403, { error: "integration_permission_forbidden" }); return true; }
+    const input = await body(request); if (input.approved !== true) { send(response, 400, { error: "template_application_approval_required" }); return true; }
+    const document = db.prepare("SELECT id,file_path FROM context_documents WHERE id=? AND archived_at IS NULL").get(parts[3]) as any; const template = templateDetail(text(input.templateId));
+    if (!document) { send(response, 404, { error: "document_not_found" }); return true; }
+    if (!template || template.status === "archived") { send(response, 404, { error: "template_not_found" }); return true; }
+    const snapshot = readMarkdownSnapshot(notesRoot, document.file_path); const markdown = renderMarkdownTemplate(template); const marker = templateMarker(template.id, template.version);
+    if (snapshot.content.includes(marker)) { send(response, 200, { applied: false, alreadyApplied: true, documentId: document.id, contentHash: snapshot.contentHash }); return true; }
+    if (text(input.contentHash) !== snapshot.contentHash) { send(response, 409, { error: "document_changed_since_preview", contentHash: snapshot.contentHash }); return true; }
+    const separator = snapshot.content.length === 0 ? "" : snapshot.content.endsWith("\n") ? "\n" : "\n\n";
+    writeFileSync(snapshot.absolutePath, `${snapshot.content}${separator}${markdown}\n`, "utf8");
+    const indexed = upsertDocument(snapshot.relativePath) as any;
+    audit("integration_append_markdown_template", { documentId: document.id, templateId: template.id, templateVersion: template.version });
+    provenance({ subjectType: "document", subjectId: document.id, eventType: "template_appended", actorType: "integration", sourceRef: snapshot.relativePath, sourceContentHash: indexed.contentHash, metadata: { templateId: template.id, templateVersion: template.version } });
+    send(response, 200, { applied: true, alreadyApplied: false, documentId: document.id, templateId: template.id, contentHash: indexed.contentHash }); return true;
+  }  if (request.method === "POST" && parts[0] === "v1" && parts[1] === "documents" && parts[2] && parts[3] === "template-preview") {
+    const input = await body(request); const document = db.prepare("SELECT id,file_path FROM context_documents WHERE id=? AND archived_at IS NULL").get(parts[2]) as any; const template = templateDetail(text(input.templateId));
+    if (!document) { send(response, 404, { error: "document_not_found" }); return true; }
+    if (!template || template.status === "archived") { send(response, 404, { error: "template_not_found" }); return true; }
+    const snapshot = readMarkdownSnapshot(notesRoot, document.file_path); const markdown = renderMarkdownTemplate(template); const marker = templateMarker(template.id, template.version);
+    send(response, 200, { documentId: document.id, templateId: template.id, templateVersion: template.version, contentHash: snapshot.contentHash, markdown, alreadyApplied: snapshot.content.includes(marker) }); return true;
+  }
+  if (request.method === "POST" && parts[0] === "v1" && parts[1] === "documents" && parts[2] && parts[3] === "template-apply") {
+    const input = await body(request); if (input.approved !== true) { send(response, 400, { error: "template_application_approval_required" }); return true; }
+    const document = db.prepare("SELECT id,file_path FROM context_documents WHERE id=? AND archived_at IS NULL").get(parts[2]) as any; const template = templateDetail(text(input.templateId));
+    if (!document) { send(response, 404, { error: "document_not_found" }); return true; }
+    if (!template || template.status === "archived") { send(response, 404, { error: "template_not_found" }); return true; }
+    const snapshot = readMarkdownSnapshot(notesRoot, document.file_path); const markdown = renderMarkdownTemplate(template); const marker = templateMarker(template.id, template.version);
+    if (snapshot.content.includes(marker)) { send(response, 200, { applied: false, alreadyApplied: true, documentId: document.id, contentHash: snapshot.contentHash }); return true; }
+    if (text(input.contentHash) !== snapshot.contentHash) { send(response, 409, { error: "document_changed_since_preview", contentHash: snapshot.contentHash }); return true; }
+    const separator = snapshot.content.length === 0 ? "" : snapshot.content.endsWith("\n") ? "\n" : "\n\n";
+    writeFileSync(snapshot.absolutePath, `${snapshot.content}${separator}${markdown}\n`, "utf8");
+    const indexed = upsertDocument(snapshot.relativePath) as any;
+    audit("apply_markdown_template", { documentId: document.id, templateId: template.id, templateVersion: template.version });
+    provenance({ subjectType: "document", subjectId: document.id, eventType: "template_appended", actorType: "user", sourceRef: snapshot.relativePath, sourceContentHash: indexed.contentHash, metadata: { templateId: template.id, templateVersion: template.version } });
+    send(response, 200, { applied: true, alreadyApplied: false, documentId: document.id, templateId: template.id, contentHash: indexed.contentHash }); return true;
+  }  if (request.method === "DELETE" && parts[0] === "v1" && parts[1] === "documents" && parts[2]) { const timestamp = now(); db.exec("BEGIN IMMEDIATE"); try { const result = db.prepare("UPDATE context_documents SET archived_at=?,updated_at=? WHERE id=? AND archived_at IS NULL").run(timestamp, timestamp, parts[2]); db.prepare("DELETE FROM context_document_fts WHERE document_id=?").run(parts[2]); db.exec("COMMIT"); send(response, result.changes ? 200 : 404, result.changes ? { archived: true } : { error: "document_not_found" }); } catch (error) { db.exec("ROLLBACK"); throw error; } return true; }
   if (request.method === "POST" && url.pathname === "/v1/documents/search") { const input = await body(request); const terms = ftsTerms(text(input.query)); if (!terms) { send(response, 400, { error: "search_query_required" }); return true; } const mode = text(input.mode) === "hybrid" ? "hybrid" : "lexical"; const from = typeof input.from === "string" ? input.from : "0000-01-01T00:00:00.000Z"; const to = typeof input.to === "string" ? input.to : "9999-12-31T23:59:59.999Z"; const limit = Math.min(100, Math.max(1, Number(input.limit) || 50)); const order = mode === "hybrid" ? "(rank * 0.8) - (julianday(d.recorded_at) * 0.000001)" : "rank"; const items = db.prepare(`SELECT d.id,d.title,d.recorded_at,d.source_updated_at,snippet(context_document_fts,2,'','','...',18) AS snippet,rank AS lexical_rank,(${order}) AS hybrid_score FROM context_document_fts JOIN context_documents d ON d.id=context_document_fts.document_id WHERE context_document_fts MATCH ? AND d.archived_at IS NULL AND d.recorded_at>=? AND d.recorded_at<=? ORDER BY hybrid_score LIMIT ?`).all(terms, from, to, limit); send(response, 200, { mode, items }); return true; }
 
   if (request.method === "GET" && url.pathname === "/v1/reviews/pending") { const items = db.prepare("SELECT e.id AS entry_id,e.template_id,c.document_id,c.source_content_hash,d.content_hash,d.file_path,COUNT(v.id) AS pending_values FROM context_entries e JOIN context_entry_candidates c ON c.entry_id=e.id JOIN context_documents d ON d.id=c.document_id JOIN context_values v ON v.entry_id=e.id AND v.user_confirmed=0 AND v.reviewed_at IS NULL WHERE e.status='active' GROUP BY e.id ORDER BY e.created_at DESC").all() as any[]; send(response, 200, { items: items.map((item) => ({ ...item, stale: item.source_content_hash !== item.content_hash })) }); return true; }

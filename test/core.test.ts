@@ -71,6 +71,8 @@ test("MCP surface exposes read-only tools", async () => {
 
 test("PCS-owned AI providers and extraction stay local or explicit", async () => {
   const manual = createLocalAiProvider({ provider: "manual" });
+  const defaultProvider = createLocalAiProvider();
+  assert.equal(defaultProvider.id, "manual");
   assert.match(manual.manualExtractionPrompt!({ content: "private note", sourceContentHash: "hash", template: { id: "template_1", fields: [] } }), /private note/);
   await assert.rejects(() => manual.extractDocumentValues({ content: "x", sourceContentHash: "hash", template: { id: "template_1", fields: [] } }), LocalAiProviderError);
   assert.throws(() => createLocalAiProvider({ provider: "openai-compatible-local", baseUrl: "https://example.com/v1" }), /remote_local_ai_endpoint/);
