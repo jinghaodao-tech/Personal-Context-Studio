@@ -1,5 +1,8 @@
 # PCS v1 Scope
 
+Status: v1 declared. This file is the canonical scope; `docs/current-product-spec.md`
+links here instead of duplicating the completion conditions.
+
 This document is the scope decision for v1. Moving an item to v1.1 or v1.2 does
 not remove an existing implementation; it changes the release commitment.
 
