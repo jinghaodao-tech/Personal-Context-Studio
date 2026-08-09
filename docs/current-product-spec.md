@@ -8,15 +8,7 @@ MeTheoryを含む分析ツールは、Integration APIで取得したスコープ
 
 ## 初期実用版の完成条件
 
-- テンプレートを作成・検証し、ユーザー承認後に有効化できる
-- Markdown Entryを記録し、値を項目単位でReview、承認、修正、撤回できる
-- 各値にsource、provenance、revision、sensitivity、valid periodを保持する
-- 矛盾値、古い値、未確認値を表示し、再確認を要求できる
-- 目的、対象、項目、Providerごとに共有範囲を制限し、Previewと履歴を残せる
-- バックアップ、復元、安全削除、暗号化、暗号鍵の再設定を実行できる
-- 管理APIとIntegration APIを分離し、Read-only MCPを提供する
-- ローカルAIが停止してもMarkdown記録と管理操作を継続できる
-- `npm run verify` が成功する
+v1の範囲は [docs/spec/v1-scope.md](spec/v1-scope.md) を参照。
 
 ## 設計原則
 

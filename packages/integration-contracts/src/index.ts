@@ -1,13 +1,19 @@
 export const CONTEXT_ANALYSIS_SNAPSHOT_VERSION = "pcs-context-analysis-snapshot-v1" as const;
 export const CONTEXT_ANALYSIS_SNAPSHOT_V2_VERSION = "pcs-analysis-snapshot-v2" as const;
 export const PCS_ANALYSIS_CONTRACT_REVISION = "pcs-analysis-snapshot-v2.1" as const;
+export const CONTEXT_ANALYSIS_SNAPSHOT_V3_VERSION = "pcs-analysis-snapshot-v3" as const;
+export const PCS_ANALYSIS_CONTRACT_V3_REVISION = "pcs-analysis-snapshot-v3.0" as const;
 export const INTEGRATION_TEMPLATE_REQUEST_VERSION = "pcs-integration-template-request-v1" as const;
 
 export type ContextAnalysisValue = { fieldKey: string; label: string; valueType: "boolean" | "single_choice" | "number" | "integer" | "text" | "long_text" | "multi_choice" | "date" | "datetime" | "duration_minutes" | "scale"; value: unknown; templateId: string; sourceDocumentId: string | null; analysisRole?: string; analysisRoleConfirmed?: boolean; analysisMergeAllowed?: boolean; minimum?: number; maximum?: number; unit?: string; allowedValues?: Array<{ key: string; label: string }> };
 export type ContextAnalysisSnapshotV1 = { schemaVersion: typeof CONTEXT_ANALYSIS_SNAPSHOT_VERSION; generatedAt: string; records: Array<{ id: string; recordedAt: string; title: string; sourceDocumentId: string | null; values: ContextAnalysisValue[] }>; excluded: { unconfirmed: number; nonShareable: number; invalid: number } };
 export type ContextAnalysisValueV2 = { fieldKey: string; label: string; valueType: "boolean" | "single_choice" | "number" | "integer" | "scale" | "duration_minutes"; value: boolean | string | number; templateId: string; templateVersionId: string; analysisRole: string; analysisRoleConfirmed: true; analysisUsage: "condition" | "outcome" | "both" | "excluded"; analysisMergeAllowed: boolean; scaleFingerprint: string; applicability?: Array<{ condition: string | null; validFrom: string | null; validTo: string | null }>; unit?: string; minimum?: number; maximum?: number; allowedValues?: Array<{ key: string; label: string }>; positiveValueKeys?: string[]; orderedValueKeys?: string[]; numericMapping?: Record<string, number>; provenance: { source: "user_input" | "reviewed_ai_extraction" | "manual_import"; sourceId: string; userConfirmed: true; recordedAt: string; transformVersion: string; privacyLevel: "normal" | "sensitive" } };
 export type ContextAnalysisSnapshotV2 = { schemaVersion: typeof CONTEXT_ANALYSIS_SNAPSHOT_V2_VERSION; contractRevision: typeof PCS_ANALYSIS_CONTRACT_REVISION; snapshotId: string; profileId: string; generatedAt: string; period: { startAt: string; endAt: string; timezone: string }; records: Array<{ id: string; recordedAt: string; title?: string; sourceDocumentId: string | null; values: ContextAnalysisValueV2[] }>; excluded: Record<string, number> };
-export type ContextAnalysisSnapshot = ContextAnalysisSnapshotV1 | ContextAnalysisSnapshotV2;
+export type ConfirmationMode = "user_confirmed" | "machine_measured";
+export type MeasurementMetadata = { definitionVersion: string; sourceTool: string; sourceToolVersion: string; measuredAt: string };
+export type ContextAnalysisValueV3 = Omit<ContextAnalysisValueV2, "provenance"> & { confirmationMode: ConfirmationMode; measurement?: MeasurementMetadata; provenance: Omit<ContextAnalysisValueV2["provenance"], "userConfirmed" | "source"> & { source: "user_input" | "reviewed_ai_extraction" | "manual_import" | "system"; userConfirmed: boolean } };
+export type ContextAnalysisSnapshotV3 = { schemaVersion: typeof CONTEXT_ANALYSIS_SNAPSHOT_V3_VERSION; contractRevision: typeof PCS_ANALYSIS_CONTRACT_V3_REVISION; snapshotId: string; profileId: string; generatedAt: string; period: { startAt: string; endAt: string; timezone: string }; records: Array<{ id: string; recordedAt: string; title?: string; sourceDocumentId: string | null; values: ContextAnalysisValueV3[] }>; excluded: Record<string, number> };
+export type ContextAnalysisSnapshot = ContextAnalysisSnapshotV1 | ContextAnalysisSnapshotV2 | ContextAnalysisSnapshotV3;
 
 export type IntegrationTemplateRequestV1 = { schemaVersion: typeof INTEGRATION_TEMPLATE_REQUEST_VERSION; id: string; sourceSystem: string; sourceReferenceId: string | null; title: string; purpose: string; durationDays: number | null; minimumObservations?: number; minimumPerGroup?: number; requestedFields: Array<{ fieldKey: string; label: string; valueType: "text" | "long_text" | "boolean" | "single_choice" | "multi_choice" | "number" | "integer" | "date" | "datetime" | "duration_minutes" | "scale"; required: boolean; options?: Array<{ key: string; label: string }>; positiveValueKeys?: string[]; orderedValueKeys?: string[]; numericMapping?: Record<string, number>; reason: string; semanticRole?: string; analysisUsage?: "condition" | "outcome" | "both"; minimum?: number; maximum?: number; unit?: string; collectionTiming?: "task_start" | "before_activity" | "during_activity" | "after_activity" | "daily" | "follow_up"; questionText?: string; sharingDefault?: "always" | "purpose_only" | "private" | "never"; sensitivity?: "normal" | "sensitive" | "highly_sensitive" }>; createdAt: string };
 export type IntegrationImportV1 = { id: string; sourceSystem: string; sourceReferenceId?: string | null; payload: Record<string, unknown>; createdAt?: string };
@@ -19,7 +25,25 @@ function validTimestamp(value: unknown): value is string { return typeof value =
 function validTimezone(value: unknown): value is string { if (typeof value !== "string" || !value) return false; try { new Intl.DateTimeFormat("en-US", { timeZone: value }).format(); return true; } catch { return false; } }
 function validSourceSystem(value: unknown): value is string { return typeof value === "string" && /^[a-z][a-z0-9_-]{0,63}$/.test(value); }
 const analysisValueKeys = new Set(["fieldKey", "label", "valueType", "value", "templateId", "templateVersionId", "analysisRole", "analysisRoleConfirmed", "analysisUsage", "analysisMergeAllowed", "scaleFingerprint", "applicability", "unit", "minimum", "maximum", "allowedValues", "positiveValueKeys", "orderedValueKeys", "numericMapping", "provenance"]);
-function validateAnalysisValue(value: unknown): ContextAnalysisValueV2 {
+const measurementKeys = new Set(["definitionVersion", "sourceTool", "sourceToolVersion", "measuredAt"]);
+const v3ValueKeys = new Set([...analysisValueKeys, "confirmationMode", "measurement"]);
+function validateMeasurement(value: unknown): MeasurementMetadata {
+  if (!isRecord(value) || Object.keys(value).some((key) => !measurementKeys.has(key)) || typeof value.definitionVersion !== "string" || !value.definitionVersion.trim() || typeof value.sourceTool !== "string" || !validSourceSystem(value.sourceTool) || typeof value.sourceToolVersion !== "string" || !value.sourceToolVersion.trim() || !validTimestamp(value.measuredAt)) throw new Error("context_analysis_measurement_invalid");
+  return value as MeasurementMetadata;
+}
+function validateAnalysisValueV3(value: unknown): ContextAnalysisValueV3 {
+  if (!isRecord(value) || Object.keys(value).some((key) => !v3ValueKeys.has(key)) || !["user_confirmed", "machine_measured"].includes(String(value.confirmationMode))) throw new Error("context_analysis_confirmation_mode_invalid");
+  const { confirmationMode: _confirmationMode, measurement: _measurement, ...baseValue } = value;
+  const base = validateAnalysisValue({ ...baseValue, provenance: isRecord(value.provenance) ? { ...value.provenance, userConfirmed: value.confirmationMode === "user_confirmed" } : value.provenance }, true);
+  if (value.confirmationMode === "machine_measured") {
+    if (value.measurement === undefined) throw new Error("context_analysis_measurement_required");
+    validateMeasurement(value.measurement);
+  } else if (value.measurement !== undefined) {
+    throw new Error("context_analysis_measurement_forbidden");
+  }
+  return { ...base, confirmationMode: value.confirmationMode, ...(value.measurement === undefined ? {} : { measurement: value.measurement }), provenance: { ...base.provenance, userConfirmed: value.confirmationMode === "user_confirmed" } } as unknown as ContextAnalysisValueV3;
+}
+function validateAnalysisValue(value: unknown, allowSystemSource = false): ContextAnalysisValueV2 {
   if (!isRecord(value) || Object.keys(value).some((key) => !analysisValueKeys.has(key)) || typeof value.fieldKey !== "string" || !keyPattern.test(value.fieldKey) || typeof value.label !== "string" || typeof value.templateId !== "string" || typeof value.templateVersionId !== "string" || typeof value.analysisRole !== "string" || value.analysisRoleConfirmed !== true || !["condition", "outcome", "both", "excluded"].includes(String(value.analysisUsage)) || typeof value.analysisMergeAllowed !== "boolean" || typeof value.scaleFingerprint !== "string" || !analysisValueTypes.has(String(value.valueType))) throw new Error("context_analysis_value_invalid");
   const type = String(value.valueType);
   const validValue = type === "boolean" ? typeof value.value === "boolean" : type === "single_choice" ? typeof value.value === "string" : typeof value.value === "number" && Number.isFinite(value.value) && (type !== "integer" || Number.isInteger(value.value));
@@ -32,7 +56,8 @@ function validateAnalysisValue(value: unknown): ContextAnalysisValueV2 {
   for (const name of ["positiveValueKeys", "orderedValueKeys"]) if (value[name] !== undefined && (!Array.isArray(value[name]) || new Set(value[name]).size !== value[name].length || value[name].some((item) => typeof item !== "string" || !keys.has(item)))) throw new Error("context_analysis_value_semantics_invalid");
   validateApplicability(value.applicability);
   if (value.numericMapping !== undefined && (!isRecord(value.numericMapping) || Object.entries(value.numericMapping).some(([key, item]) => !keys.has(key) || typeof item !== "number" || !Number.isFinite(item)))) throw new Error("context_analysis_value_semantics_invalid");
-  if (!isRecord(value.provenance) || !["user_input", "reviewed_ai_extraction", "manual_import"].includes(String(value.provenance.source)) || typeof value.provenance.sourceId !== "string" || value.provenance.userConfirmed !== true || !validTimestamp(value.provenance.recordedAt) || typeof value.provenance.transformVersion !== "string" || !["normal", "sensitive"].includes(String(value.provenance.privacyLevel))) throw new Error("context_analysis_value_provenance_invalid");
+  const validSources = allowSystemSource ? ["user_input", "reviewed_ai_extraction", "manual_import", "system"] : ["user_input", "reviewed_ai_extraction", "manual_import"];
+  if (!isRecord(value.provenance) || !validSources.includes(String(value.provenance.source)) || typeof value.provenance.sourceId !== "string" || (allowSystemSource ? typeof value.provenance.userConfirmed !== "boolean" : value.provenance.userConfirmed !== true) || !validTimestamp(value.provenance.recordedAt) || typeof value.provenance.transformVersion !== "string" || !["normal", "sensitive"].includes(String(value.provenance.privacyLevel))) throw new Error("context_analysis_value_provenance_invalid");
   return value as ContextAnalysisValueV2;
 }
 const analysisValueTypes = new Set(["boolean", "single_choice", "number", "integer", "scale", "duration_minutes"]);
@@ -63,15 +88,21 @@ function validateAnalysisRecord(value: unknown): ContextAnalysisSnapshotV2["reco
   const values = value.values.map((item) => { const validated = validateAnalysisValue(item); const key = `${validated.templateId}:${validated.templateVersionId}:${validated.fieldKey}`; if (seen.has(key)) throw new Error("context_analysis_duplicate_field"); seen.add(key); return validated; });
   return { id: String(value.id), recordedAt: String(value.recordedAt), ...(value.title === undefined ? {} : { title: String(value.title) }), sourceDocumentId: value.sourceDocumentId === null ? null : String(value.sourceDocumentId), values } as unknown as ContextAnalysisSnapshotV2["records"][number];
 }
+function validateAnalysisRecordV3(value: unknown): ContextAnalysisSnapshotV3["records"][number] {
+  if (!isRecord(value) || Object.keys(value).some((key) => !recordKeys.has(key)) || typeof value.id !== "string" || !value.id || !validTimestamp(value.recordedAt) || (value.title !== undefined && typeof value.title !== "string") || (value.title !== undefined && String(value.title).length > 500) || (value.sourceDocumentId !== null && typeof value.sourceDocumentId !== "string") || !Array.isArray(value.values)) throw new Error("context_analysis_record_invalid");
+  const seen = new Set<string>();
+  const values = value.values.map((item) => { const validated = validateAnalysisValueV3(item); const key = `${validated.templateId}:${validated.templateVersionId}:${validated.fieldKey}`; if (seen.has(key)) throw new Error("context_analysis_duplicate_field"); seen.add(key); return validated; });
+  return { id: String(value.id), recordedAt: String(value.recordedAt), ...(value.title === undefined ? {} : { title: String(value.title) }), sourceDocumentId: value.sourceDocumentId === null ? null : String(value.sourceDocumentId), values } as unknown as ContextAnalysisSnapshotV3["records"][number];
+}
 export function validateContextAnalysisSnapshot(value: unknown): ContextAnalysisSnapshot {
   if (!isRecord(value) || Object.keys(value).some((key) => !["schemaVersion", "generatedAt", "records", "excluded", "contractRevision", "snapshotId", "profileId", "period"].includes(key)) || !validTimestamp(value.generatedAt)) throw new Error("context_analysis_snapshot_invalid");
   if (value.schemaVersion === CONTEXT_ANALYSIS_SNAPSHOT_VERSION && Array.isArray(value.records) && isRecord(value.excluded)) {
     for (const record of value.records) { if (!isRecord(record) || typeof record.id !== "string" || !validTimestamp(record.recordedAt) || typeof record.title !== "string" || record.title.length > 500 || (record.sourceDocumentId !== null && typeof record.sourceDocumentId !== "string") || !Array.isArray(record.values)) throw new Error("context_analysis_snapshot_invalid"); }
     return value as unknown as ContextAnalysisSnapshotV1;
   }
-  if (value.schemaVersion === CONTEXT_ANALYSIS_SNAPSHOT_V2_VERSION && value.contractRevision === PCS_ANALYSIS_CONTRACT_REVISION && typeof value.snapshotId === "string" && typeof value.profileId === "string" && isRecord(value.period) && Object.keys(value.period).every((key) => periodKeys.has(key)) && typeof value.period.startAt === "string" && typeof value.period.endAt === "string" && typeof value.period.timezone === "string" && validTimestamp(value.period.startAt) && validTimestamp(value.period.endAt) && validTimezone(value.period.timezone) && Array.isArray(value.records) && isRecord(value.excluded)) {
+  if ((value.schemaVersion === CONTEXT_ANALYSIS_SNAPSHOT_V2_VERSION && value.contractRevision === PCS_ANALYSIS_CONTRACT_REVISION || value.schemaVersion === CONTEXT_ANALYSIS_SNAPSHOT_V3_VERSION && value.contractRevision === PCS_ANALYSIS_CONTRACT_V3_REVISION) && typeof value.snapshotId === "string" && typeof value.profileId === "string" && isRecord(value.period) && Object.keys(value.period).every((key) => periodKeys.has(key)) && typeof value.period.startAt === "string" && typeof value.period.endAt === "string" && typeof value.period.timezone === "string" && validTimestamp(value.period.startAt) && validTimestamp(value.period.endAt) && validTimezone(value.period.timezone) && Array.isArray(value.records) && isRecord(value.excluded)) {
     if (JSON.stringify(value).length > maxJsonBytes || Date.parse(value.period.startAt as string) >= Date.parse(value.period.endAt as string) || !Object.values(value.excluded).every((item) => typeof item === "number" && Number.isInteger(item) && item >= 0)) throw new Error("context_analysis_snapshot_invalid");
-    const records = value.records.map(validateAnalysisRecord);
+    const records = value.schemaVersion === CONTEXT_ANALYSIS_SNAPSHOT_V3_VERSION ? value.records.map(validateAnalysisRecordV3) : value.records.map(validateAnalysisRecord);
     return { ...value, records } as unknown as ContextAnalysisSnapshotV2;
   }
   throw new Error("context_analysis_snapshot_invalid");

@@ -168,6 +168,50 @@ export function applyMigrations(db: DatabaseSync, schemaSql: string) {
       addColumn("context_templates", "provenance_json", "TEXT NOT NULL DEFAULT '{}'");
       db.exec("CREATE INDEX IF NOT EXISTS context_templates_source_idx ON context_templates(source_system,source_reference_id); CREATE INDEX IF NOT EXISTS context_templates_request_idx ON context_templates(integration_request_id);");
     } },
+    { version: "019_user_experience_state", apply: () => db.exec(`
+      CREATE TABLE IF NOT EXISTS pcs_onboarding_state (
+        id TEXT PRIMARY KEY CHECK(id='local'), selected_purpose TEXT, preset_version TEXT NOT NULL,
+        completed INTEGER NOT NULL DEFAULT 0 CHECK(completed IN(0,1)), skipped INTEGER NOT NULL DEFAULT 0 CHECK(skipped IN(0,1)),
+        quick_fields_json TEXT NOT NULL DEFAULT '[]', dashboard_preferences_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS pcs_experience_entry_requests (
+        request_id TEXT PRIMARY KEY, entry_id TEXT NOT NULL REFERENCES context_entries(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS pcs_review_classifications (
+        value_id TEXT PRIMARY KEY REFERENCES context_values(id) ON DELETE CASCADE,
+        classification TEXT NOT NULL CHECK(classification IN('high_confidence','needs_review','sensitive_or_conflict')),
+        updated_at TEXT NOT NULL
+      ) STRICT;
+      INSERT OR IGNORE INTO pcs_onboarding_state(id,preset_version,created_at,updated_at) VALUES('local','v1',datetime('now'),datetime('now'));
+      CREATE INDEX IF NOT EXISTS pcs_review_classification_idx ON pcs_review_classifications(classification,updated_at DESC);
+    `) },
+    { version: "020_review_classification_evidence", apply: () => {
+      const columns = db.prepare("PRAGMA table_info(pcs_review_classifications)").all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === "confidence")) db.exec("ALTER TABLE pcs_review_classifications ADD COLUMN confidence REAL CHECK(confidence IS NULL OR (confidence>=0 AND confidence<=1))");
+      if (!columns.some((column) => column.name === "reason_json")) db.exec("ALTER TABLE pcs_review_classifications ADD COLUMN reason_json TEXT NOT NULL DEFAULT '[]'");
+    } },
+    { version: "021_machine_measured_values", apply: () => {
+      const addColumn = (table: string, column: string, definition: string) => {
+        const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+        if (!columns.some((item) => item.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+      };
+      addColumn("context_values", "confirmation_mode", "TEXT NOT NULL DEFAULT 'user_confirmed'");
+      addColumn("context_values", "measurement_json", "TEXT NOT NULL DEFAULT '{}'");
+      addColumn("context_value_revisions", "confirmation_mode", "TEXT NOT NULL DEFAULT 'user_confirmed'");
+      addColumn("context_value_revisions", "measurement_json", "TEXT NOT NULL DEFAULT '{}'");
+      addColumn("context_profiles", "include_machine_measured", "INTEGER NOT NULL DEFAULT 0");
+      db.exec("CREATE INDEX IF NOT EXISTS context_values_confirmation_idx ON context_values(confirmation_mode,recorded_at DESC)");
+    } },
+    { version: "022_remeasurement_revision_type", apply: () => {
+      const table = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='context_value_revisions'").get() as { sql?: string } | undefined;
+      if (!table?.sql || table.sql.includes("'remeasurement'")) return;
+      db.exec("PRAGMA foreign_keys=OFF; ALTER TABLE context_value_revisions RENAME TO context_value_revisions_legacy;");
+      db.exec("CREATE TABLE context_value_revisions (id TEXT PRIMARY KEY, value_id TEXT NOT NULL REFERENCES context_values(id) ON DELETE CASCADE, entry_id TEXT NOT NULL REFERENCES context_entries(id) ON DELETE CASCADE, field_key TEXT NOT NULL, value_json TEXT NOT NULL, encrypted INTEGER NOT NULL DEFAULT 0 CHECK(encrypted IN(0,1)), change_type TEXT NOT NULL CHECK(change_type IN('initial','correction','state_change','exception','reaffirmation','retraction','remeasurement')), reason TEXT NOT NULL, valid_from TEXT, valid_to TEXT, sharing TEXT NOT NULL CHECK(sharing IN('always','purpose_only','private','never')), sensitivity TEXT NOT NULL CHECK(sensitivity IN('normal','sensitive','highly_sensitive')), supersedes_revision_id TEXT, source_id TEXT, source_content_hash TEXT, user_confirmed INTEGER NOT NULL CHECK(user_confirmed IN(0,1)), confirmation_mode TEXT NOT NULL DEFAULT 'user_confirmed', measurement_json TEXT NOT NULL DEFAULT '{}', confirmed_at TEXT, created_at TEXT NOT NULL) STRICT");
+      db.exec("INSERT INTO context_value_revisions(id,value_id,entry_id,field_key,value_json,encrypted,change_type,reason,valid_from,valid_to,sharing,sensitivity,supersedes_revision_id,source_id,source_content_hash,user_confirmed,confirmation_mode,measurement_json,confirmed_at,created_at) SELECT id,value_id,entry_id,field_key,value_json,encrypted,change_type,reason,valid_from,valid_to,sharing,sensitivity,supersedes_revision_id,source_id,source_content_hash,user_confirmed,COALESCE(confirmation_mode,'user_confirmed'),COALESCE(measurement_json,'{}'),confirmed_at,created_at FROM context_value_revisions_legacy");
+      db.exec("DROP TABLE context_value_revisions_legacy; CREATE INDEX IF NOT EXISTS context_value_revisions_value_idx ON context_value_revisions(value_id,created_at DESC); CREATE INDEX IF NOT EXISTS context_value_revisions_entry_field_idx ON context_value_revisions(entry_id,field_key,created_at DESC); PRAGMA foreign_keys=ON;");
+    } },
   ];
   const applied = new Set((db.prepare("SELECT version FROM schema_migrations").all() as Array<{ version: string }>).map((row) => row.version));
   for (const migration of migrations) {

@@ -1,6 +1,27 @@
 # Personal Context Studio
 
-The current product contract is [docs/current-product-spec.md](docs/current-product-spec.md). Architecture decisions are recorded in [docs/adr](docs/adr) and the main usability notes are in [docs/usability-findings.md](docs/usability-findings.md).
+The current product contract is [docs/current-product-spec.md](docs/current-product-spec.md). The release scope decision is [docs/spec/v1-scope.md](docs/spec/v1-scope.md). Architecture decisions are recorded in [docs/adr](docs/adr) and the main usability notes are in [docs/usability-findings.md](docs/usability-findings.md).
+
+## はじめに
+
+Personal Context Studio（PCS）は、Markdownを人間が読む正本として保ちながら、そこから得た構造化情報の確定・更新・共有・削除をローカルで管理するアプリです。AIや外部ツールが作った値は候補として扱い、ユーザーが確認するまで確定値や共有対象にはなりません。
+
+ローカル管理画面を初めて開くと、日々の調子、勉強・作業、MeTheoryでの仮説検証、自由記録から目的を選べます。選択後は目的別のテンプレートと共有プロファイルが冪等に作成されます。既存データがある場合は初期設定を強制せず、後から設定できます。
+
+ホーム画面では次の操作ができます。
+
+- 3〜5項目だけを使った「30秒で記録」
+- 未確定候補、再確認期限、MeTheoryからの要求の確認
+- 項目の型、分析用途、共有範囲、感度を確認できる項目カタログ
+- 共有前プレビュー、バックアップ、監査履歴への移動
+
+Reviewは「センシティブ・競合」「確認が必要」「高信頼候補」に分けて表示します。高信頼候補にできるのは、明示された信頼度が90%以上で、通常感度かつ未競合の値だけです。分類が高信頼でも自動確定はせず、最終確認はユーザーが行います。
+
+```powershell
+npm.cmd run dev
+```
+
+起動後、`http://127.0.0.1:8300/` を開いてください。
 
 
 ## Portfolio Summary

@@ -1,4 +1,4 @@
-# ADR-001: Responsibility Boundaries
+# ADR-010: Responsibility Boundaries
 
 ## Decision
 

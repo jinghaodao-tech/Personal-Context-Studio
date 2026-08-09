@@ -6,7 +6,8 @@ const ignored = new Set(["node_modules", ".git", "data", "backups"]);
 const ignoredFiles = new Set(["check-encoding.mjs"]);
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const failures = [];
-const mojibake = /(?:\\u7e67|\\u7e3a|\\u873f|\\u83a0|\\u8b41)/;
+const escapedMojibake = /(?:\\u7e67|\\u7e3a|\\u873f|\\u83a0|\\u8b41)/;
+const decodedMojibake = /(?:繝|縺|蜈|譁|邂|螳|險|逕|髫|蟄|荳|ã[\x80-\xBF]|Ã[\x80-\xBF])/;
 function scan(directory) {
   for (const item of readdirSync(directory, { withFileTypes: true })) {
     if (ignored.has(item.name) || ignoredFiles.has(item.name)) continue;
@@ -15,7 +16,7 @@ function scan(directory) {
     else if (allowed.has(path.slice(path.lastIndexOf(".")))) {
       try {
         const value = decoder.decode(readFileSync(path));
-        if (value.includes("\uFFFD") || value.includes("\u0000") || /[\u0001-\u0008\u000B\u000C\u000E-\u001F]/.test(value) || mojibake.test(value)) failures.push(path);
+        if (value.includes("\uFFFD") || value.includes("\u0000") || /[\u0001-\u0008\u000B\u000C\u000E-\u001F]/.test(value) || escapedMojibake.test(value) || decodedMojibake.test(value)) failures.push(path);
       } catch { failures.push(path); }
     }
   }

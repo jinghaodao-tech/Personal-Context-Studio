@@ -124,3 +124,12 @@ test("rejects malformed V2 records, duplicate fields, applicability and unknown 
   assert.throws(() => validateContextAnalysisSnapshot({ ...base, records: [{ ...base.records[0], values: [{ ...baseValue, applicability: [{ condition: null, validFrom: null, validTo: null }] }] }] }), /applicability_invalid/);
   assert.throws(() => validateContextAnalysisSnapshot({ ...base, records: [{ ...base.records[0], values: [{ ...baseValue, applicability: [{ condition: "workday", validFrom: null, validTo: null }, { condition: " WORKDAY ", validFrom: null, validTo: null }] }] }] }), /applicability_duplicate/);
 });
+
+test("V3 distinguishes user-confirmed and machine-measured values", () => {
+  const value = { fieldKey: "active_minutes", label: "Active minutes", valueType: "duration_minutes", value: 42, templateId: "activity", templateVersionId: "v1", analysisRole: "condition", analysisRoleConfirmed: true, analysisUsage: "condition", analysisMergeAllowed: true, scaleFingerprint: "duration_minutes", confirmationMode: "machine_measured", measurement: { definitionVersion: "dev-pace-1", sourceTool: "dev-pace", sourceToolVersion: "0.2.0", measuredAt: "2026-08-09T08:00:00.000Z" }, provenance: { source: "system", sourceId: "dev-pace:2026-08-09", userConfirmed: false, recordedAt: "2026-08-09T08:00:00.000Z", transformVersion: "pcs-v3", privacyLevel: "normal" } };
+  const snapshot = { schemaVersion: "pcs-analysis-snapshot-v3", contractRevision: "pcs-analysis-snapshot-v3.0", snapshotId: "snapshot", profileId: "profile", generatedAt: "2026-08-09T08:00:00.000Z", period: { startAt: "2026-08-09T00:00:00.000Z", endAt: "2026-08-10T00:00:00.000Z", timezone: "Asia/Tokyo" }, records: [{ id: "record", recordedAt: "2026-08-09T08:00:00.000Z", sourceDocumentId: null, values: [value] }], excluded: {} };
+  const validated = validateContextAnalysisSnapshot(snapshot) as any;
+  assert.equal(validated.records[0].values[0].confirmationMode, "machine_measured");
+  assert.throws(() => validateContextAnalysisSnapshot({ ...snapshot, records: [{ ...snapshot.records[0], values: [{ ...value, measurement: undefined }] }] }), /measurement_required/);
+  assert.throws(() => validateContextAnalysisSnapshot({ ...snapshot, records: [{ ...snapshot.records[0], values: [{ ...value, confirmationMode: "user_confirmed", provenance: { ...value.provenance, source: "user_input", userConfirmed: true } }] }] }), /measurement_forbidden/);
+});

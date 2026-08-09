@@ -1,4 +1,4 @@
-# ADR-011: Operational boundaries
+# ADR-012: Operational Boundaries
 
 ## Decision
 

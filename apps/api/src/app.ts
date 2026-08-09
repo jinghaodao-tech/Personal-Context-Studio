@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { buildOmissionManifest, calculateReconfirmAfter, collectEligibleValues, eligibleForExport, evaluateDisclosure, isSecretLike, newId, validateContextValue, type ContextTemplateField, type Sharing, type Sensitivity } from "../../../packages/domain/src/index.ts";
-import { CONTEXT_ANALYSIS_SNAPSHOT_VERSION } from "../../../packages/integration-contracts/src/index.ts";
+import { CONTEXT_ANALYSIS_SNAPSHOT_VERSION, CONTEXT_ANALYSIS_SNAPSHOT_V3_VERSION, PCS_ANALYSIS_CONTRACT_V3_REVISION } from "../../../packages/integration-contracts/src/index.ts";
 import { excerpt, readMarkdownSnapshot } from "../../../packages/documents/src/index.ts";
 import { createLocalAiProvider } from "../../../packages/ai-core/src/index.ts";
 import { estimateTokens, normalizeExportTarget, renderTargetWithDetail, storedFormat, truncateRenderedTarget, type DetailLevel } from "../../../packages/export-renderers/src/index.ts";
@@ -21,6 +21,7 @@ import { handleRuntimeRoute } from "./routes/runtime.ts";
 import { handleProfileRoute } from "./routes/profiles.ts";
 import { handleEntryRoute } from "./routes/entries.ts";
 import { handleLifecycleRoute } from "./routes/lifecycle.ts";
+import { handleExperienceRoute } from "./routes/experience.ts";
 import { readDashboardOverview, readDashboardValues } from "./services/dashboard.ts";
 
 const root = resolve(import.meta.dirname, "../../..");
@@ -77,8 +78,8 @@ function provenance(input: { subjectType: "document" | "entry" | "value" | "temp
   db.prepare("INSERT INTO context_provenance(id,subject_type,subject_id,event_type,actor_type,source_ref,source_content_hash,provider_id,model,payload_hash,metadata_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(newId("provenance"), input.subjectType, input.subjectId, input.eventType, input.actorType, input.sourceRef ?? null, input.sourceContentHash ?? null, input.providerId ?? null, input.model ?? null, payload, JSON.stringify(input.metadata ?? {}), now());
 }
 
-type RevisionChangeType = "initial" | "correction" | "state_change" | "exception" | "reaffirmation" | "retraction";
-const revisionChangeTypes = new Set<RevisionChangeType>(["initial", "correction", "state_change", "exception", "reaffirmation", "retraction"]);
+type RevisionChangeType = "initial" | "correction" | "state_change" | "exception" | "reaffirmation" | "retraction" | "remeasurement";
+const revisionChangeTypes = new Set<RevisionChangeType>(["initial", "correction", "state_change", "exception", "reaffirmation", "retraction", "remeasurement"]);
 
 function revisionSourceHash(entryId: string) {
   return (db.prepare("SELECT source_content_hash FROM context_entry_candidates WHERE entry_id=?").get(entryId) as { source_content_hash?: string } | undefined)?.source_content_hash ?? null;
@@ -222,20 +223,22 @@ function periodsIntersect(applicability: { validFrom: string | null; validTo: st
     return from < end && to > start;
   });
 }
-function analysisSnapshotV2(profileId: string, startAt?: string, endAt?: string, timezone = "UTC") {
-  const profile = db.prepare("SELECT id,purpose_id FROM context_profiles WHERE id=? AND is_active=1").get(profileId) as { id: string; purpose_id: string | null } | undefined;
+function analysisSnapshotV2(profileId: string, startAt?: string, endAt?: string, timezone = "UTC", includeMachineMeasured = false) {
+  const profile = db.prepare("SELECT id,purpose_id,include_machine_measured FROM context_profiles WHERE id=? AND is_active=1").get(profileId) as { id: string; purpose_id: string | null; include_machine_measured?: number } | undefined;
   if (!profile) throw new Error("pcs_profile_not_found");
   const selected = new Set((db.prepare("SELECT template_id,field_key FROM context_profile_fields WHERE profile_id=?").all(profileId) as Array<{ template_id: string; field_key: string }>).map((item) => `${item.template_id}:${item.field_key}`));
   const allowedPurposeValues = new Set((db.prepare("SELECT value_id FROM context_value_purposes WHERE purpose_id=?").all(profile.purpose_id ?? "") as Array<{ value_id: string }>).map((item) => item.value_id));
   const lower = validTimestamp(startAt) ? startAt! : new Date(Date.now() - 30 * 86400000).toISOString();
   const upper = validTimestamp(endAt) ? endAt! : new Date().toISOString();
-  const rows = db.prepare("SELECT e.id AS entry_id,e.template_id,e.template_version,v.id AS value_id,v.field_key,v.value_json,v.source,v.source_id,v.user_confirmed,v.sharing,v.sensitivity,v.lifecycle_state,v.recorded_at,f.label,f.value_type,f.options_json,f.minimum_value,f.maximum_value,f.unit,f.analysis_role,f.analysis_role_confirmed,f.analysis_usage,f.analysis_merge_allowed,f.positive_value_keys_json,f.ordered_value_keys_json,f.numeric_mapping_json FROM context_entries e JOIN context_values v ON v.entry_id=e.id JOIN context_template_fields f ON f.template_id=e.template_id AND f.field_key=v.field_key WHERE e.status='active' AND v.recorded_at>=? AND v.recorded_at<=? ORDER BY v.recorded_at,e.id").all(lower, upper) as any[];
+  const rows = db.prepare("SELECT e.id AS entry_id,e.template_id,e.template_version,v.id AS value_id,v.field_key,v.value_json,v.source,v.source_id,v.user_confirmed,v.confirmation_mode,v.measurement_json,v.sharing,v.sensitivity,v.lifecycle_state,v.recorded_at,f.label,f.value_type,f.options_json,f.minimum_value,f.maximum_value,f.unit,f.analysis_role,f.analysis_role_confirmed,f.analysis_usage,f.analysis_merge_allowed,f.positive_value_keys_json,f.ordered_value_keys_json,f.numeric_mapping_json FROM context_entries e JOIN context_values v ON v.entry_id=e.id JOIN context_template_fields f ON f.template_id=e.template_id AND f.field_key=v.field_key WHERE e.status='active' AND v.recorded_at>=? AND v.recorded_at<=? ORDER BY v.recorded_at,e.id").all(lower, upper) as any[];
   const records = new Map<string, { id: string; recordedAt: string; title?: string; sourceDocumentId: string | null; values: any[] }>();
-  const excluded = { unconfirmed: 0, nonShareable: 0, highlySensitive: 0, invalid: 0, applicabilityOutOfPeriod: 0 };
-  const supported = new Set(["boolean", "single_choice", "number", "integer", "scale", "duration_minutes"]);
+  const excluded = { unconfirmed: 0, nonShareable: 0, highlySensitive: 0, invalid: 0, applicabilityOutOfPeriod: 0, machineMeasuredNotPermitted: 0 };
+  const supported = new Set(["boolean", "single_choice", "number", "integer", "scale", "duration_minutes", "text", "long_text"]);
   for (const row of rows) {
     if (!selected.has(`${row.template_id}:${row.field_key}`)) continue;
-    const disclosure = evaluateDisclosure({ value: undefined, userConfirmed: Boolean(row.user_confirmed), lifecycleState: row.lifecycle_state, sharing: row.sharing, sensitivity: row.sensitivity, purposeAllowed: Boolean(profile.purpose_id && allowedPurposeValues.has(row.value_id)) });
+    const machineMeasured = row.confirmation_mode === "machine_measured";
+    if (machineMeasured && (!includeMachineMeasured || !profile.include_machine_measured)) { excluded.machineMeasuredNotPermitted += 1; continue; }
+    const disclosure = evaluateDisclosure({ value: undefined, userConfirmed: machineMeasured || Boolean(row.user_confirmed), lifecycleState: row.lifecycle_state, sharing: row.sharing, sensitivity: row.sensitivity, purposeAllowed: Boolean(profile.purpose_id && allowedPurposeValues.has(row.value_id)) });
     if (!disclosure.included) {
       if (disclosure.reason === "unconfirmed") excluded.unconfirmed += 1;
       else if (disclosure.reason === "highly_sensitive") excluded.highlySensitive += 1;
@@ -244,25 +247,35 @@ function analysisSnapshotV2(profileId: string, startAt?: string, endAt?: string,
     }
     let value: unknown;
     try { value = decodedValue(row); } catch { excluded.invalid += 1; continue; }
-    if (isSecretLike(typeof value === "string" ? value : JSON.stringify(value)) || !supported.has(row.value_type) || !row.analysis_role_confirmed || !row.analysis_role || !["condition", "outcome", "both", "excluded"].includes(row.analysis_usage ?? "excluded")) { excluded.invalid += 1; continue; }
-    if (row.analysis_usage === "excluded") { excluded.invalid += 1; continue; }
+    const exportOnlyHourlyVector = row.field_key === "hourly_active_minutes" && row.analysis_usage === "excluded" && row.value_type === "long_text";
+    if (isSecretLike(typeof value === "string" ? value : JSON.stringify(value)) || !supported.has(row.value_type) || (!exportOnlyHourlyVector && (!row.analysis_role_confirmed || !row.analysis_role || !["condition", "outcome", "both", "excluded"].includes(row.analysis_usage ?? "excluded")))) { excluded.invalid += 1; continue; }
+    if (row.analysis_usage === "excluded" && !exportOnlyHourlyVector) { excluded.invalid += 1; continue; }
+    let measurement: Record<string, string> | undefined;
+    if (machineMeasured) {
+      try { const parsed = JSON.parse(row.measurement_json ?? "{}"); if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || typeof parsed.definitionVersion !== "string" || !parsed.definitionVersion.trim() || typeof parsed.sourceTool !== "string" || !/^[a-z][a-z0-9_-]{0,63}$/.test(parsed.sourceTool) || typeof parsed.sourceToolVersion !== "string" || !parsed.sourceToolVersion.trim() || typeof parsed.measuredAt !== "string" || Number.isNaN(Date.parse(parsed.measuredAt))) throw new Error("measurement_invalid"); measurement = parsed; } catch { excluded.invalid += 1; continue; }
+    }
     const record: { id: string; recordedAt: string; title?: string; sourceDocumentId: string | null; values: any[] } = records.get(row.entry_id) ?? { id: row.entry_id, recordedAt: row.recorded_at, title: String(row.template_id), sourceDocumentId: typeof row.source_id === "string" && row.source_id.startsWith("doc_") ? row.source_id : null, values: [] };
     let allowedValues: Array<{ key: string; label: string }> | undefined;
     try { const options = JSON.parse(row.options_json); if (Array.isArray(options)) allowedValues = options.filter((item): item is { key: string; label: string } => Boolean(item) && typeof item.key === "string" && typeof item.label === "string"); } catch { excluded.invalid += 1; continue; }
     const applicability = db.prepare("SELECT applicability_condition AS condition,valid_from AS validFrom,valid_to AS validTo FROM context_value_applicability WHERE value_id=? ORDER BY valid_from").all(row.value_id) as Array<{ condition: string | null; validFrom: string | null; validTo: string | null }>;
     if (applicability.length > 0 && !periodsIntersect(applicability, lower, upper)) { excluded.applicabilityOutOfPeriod += 1; continue; }
-    const source = row.source === "user_input" ? "user_input" : row.source === "manual_import" ? "manual_import" : "manual_import";
+    const source = machineMeasured ? "system" : row.source === "user_input" ? "user_input" : row.source === "manual_import" ? "manual_import" : "manual_import";
     record.values.push({
       fieldKey: row.field_key, label: row.label, valueType: row.value_type, value,
       templateId: row.template_id, templateVersionId: String(row.template_version),
-      analysisRole: row.analysis_role, analysisRoleConfirmed: true, analysisUsage: row.analysis_usage,
+      analysisRole: row.analysis_role ?? (exportOnlyHourlyVector ? "other" : undefined), analysisRoleConfirmed: true, analysisUsage: row.analysis_usage,
       analysisMergeAllowed: Boolean(row.analysis_merge_allowed), scaleFingerprint: [row.value_type, row.minimum_value ?? "", row.maximum_value ?? "", row.unit ?? "", JSON.stringify(allowedValues ?? [])].join("|"),
       unit: row.unit ?? undefined, minimum: row.minimum_value ?? undefined, maximum: row.maximum_value ?? undefined, allowedValues, positiveValueKeys: JSON.parse(row.positive_value_keys_json ?? "[]"), orderedValueKeys: JSON.parse(row.ordered_value_keys_json ?? "[]"), numericMapping: JSON.parse(row.numeric_mapping_json ?? "{}"), applicability,
-      provenance: { source, sourceId: row.source_id ?? row.entry_id, userConfirmed: true, recordedAt: row.recorded_at, transformVersion: "pcs-v2", privacyLevel: row.sensitivity === "sensitive" ? "sensitive" : "normal" }
+      provenance: { source, sourceId: row.source_id ?? row.entry_id, userConfirmed: !machineMeasured, recordedAt: row.recorded_at, transformVersion: "pcs-v2", privacyLevel: row.sensitivity === "sensitive" ? "sensitive" : "normal" },
+      ...(includeMachineMeasured ? { confirmationMode: machineMeasured ? "machine_measured" : "user_confirmed", ...(measurement ? { measurement } : {}) } : {})
     });
     records.set(row.entry_id, record);
   }
   return { schemaVersion: "pcs-analysis-snapshot-v2", snapshotId: `pcs_snapshot_${profileId}_${lower}_${upper}`, profileId, generatedAt: now(), period: { startAt: lower, endAt: upper, timezone }, records: [...records.values()], excluded };
+}
+function analysisSnapshotV3(profileId: string, startAt?: string, endAt?: string, timezone = "UTC") {
+  const snapshot = analysisSnapshotV2(profileId, startAt, endAt, timezone, true) as any;
+  return { ...snapshot, schemaVersion: CONTEXT_ANALYSIS_SNAPSHOT_V3_VERSION, contractRevision: PCS_ANALYSIS_CONTRACT_V3_REVISION, records: snapshot.records.map((record: any) => ({ ...record, values: record.values.map((value: any) => ({ ...value, confirmationMode: value.confirmationMode ?? "user_confirmed", ...(value.measurement && Object.keys(value.measurement).length ? { measurement: value.measurement } : {}) })) })) };
 }
 
 function candidateStale(entryId: string) {
@@ -314,9 +327,10 @@ export const server = createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/v1/auth/session") { if (!adminToken || !managementAuthorized(request, adminToken)) return send(response, 401, { error: "management_authorization_required" }); const token = randomBytes(32).toString("base64url"), timestamp = now(), expiresAt = new Date(Date.parse(timestamp) + 8 * 60 * 60 * 1000).toISOString(); db.prepare("INSERT INTO auth_sessions(id,token_hash,expires_at,created_at) VALUES(?,?,?,?)").run(newId("session"), hashIntegrationToken(token), expiresAt, timestamp); return send(response, 201, { token, expiresAt }); }
     if (request.method === "POST" && url.pathname === "/v1/auth/session/revoke") { const token = typeof request.headers["x-pcs-session-token"] === "string" ? request.headers["x-pcs-session-token"].trim() : ""; if (!token) return send(response, 400, { error: "session_token_required" }); const result = db.prepare("UPDATE auth_sessions SET revoked_at=? WHERE token_hash=? AND revoked_at IS NULL").run(now(), hashIntegrationToken(token)); return result.changes ? send(response, 200, { revoked: true }) : send(response, 404, { error: "session_not_found" }); }
     if (url.pathname.startsWith("/v1/") && !isIntegrationRequest(request.method, url.pathname) && !["/v1/auth/session", "/v1/auth/session/revoke"].includes(url.pathname) && !managementAuthorized(request, adminToken, db)) return send(response, 401, { error: "management_authorization_required" });
+    if (await handleExperienceRoute(request, response, url, { db, send, body, text, now, newId, audit })) return;
     if (await handleOperationsRoute(request, response, url, parts, { db, databasePath, backupDirectory, watcherStatePath, encryptionKey: dataEncryptionKey, send, now, newId, fileHash, audit, provenance })) return;
      if (await handleGovernanceRoute(request, response, url, parts, { db, send, body, text, now, newId, destinationHost, validPurpose, audit })) return;
-     if (await handleRuntimeRoute(request, response, url, { db, send, body, text, activeExternalAiConsent, destinationHost, detectOllama, detectOpenAiCompatible, localAiProvider, localAiRuntime, analysisSnapshot: analysisSnapshotV2, integrationAuthorization })) return;
+     if (await handleRuntimeRoute(request, response, url, { db, send, body, text, activeExternalAiConsent, destinationHost, detectOllama, detectOpenAiCompatible, localAiProvider, localAiRuntime, analysisSnapshot: analysisSnapshotV2, analysisSnapshotV3, integrationAuthorization })) return;
      if (await handleProfileRoute(request, response, url, parts, { db, send, body, text, now, newId, audit, validPurpose })) return;
      if (await handleEntryRoute(request, response, url, parts, { db, send, body, text, now, newId, audit, provenance, templateDetail, domainField, valueRow, decodedJson, storedValue, addRevision, recordReview, detectConflicts, createInitialRevision, validateContextValue, validTimestamp, calculateReconfirmAfter, isSecretLike, allowedSharing, allowedSensitivity })) return;
      if (await handleLifecycleRoute(request, response, url, parts, { db, send, body, text, now, audit, provenance, decodedJson, validPurpose, valueRow, addRevision, newId, revisionSourceHash, exportPreview, isSecretLike })) return;
