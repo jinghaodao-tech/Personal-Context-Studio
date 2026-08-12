@@ -62,7 +62,7 @@ test("MCP surface exposes read-only tools", async () => {
   try {
     const response = await child.request({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
     const names = response.result.tools.map((tool: { name: string }) => tool.name);
-    assert.deepEqual(names, []);
+    assert.deepEqual(names, ["list_reviewed_context"]);
     assert.equal(names.some((name: string) => /create|update|delete|write/.test(name)), false);
   } finally {
     child.close();

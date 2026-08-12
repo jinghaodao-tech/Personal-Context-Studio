@@ -23,6 +23,7 @@ npm.cmd run dev
 
 起動後、`http://127.0.0.1:8300/` を開いてください。
 
+![PCS dashboard home](docs/screenshots/dashboard-home.jpg)
 
 ## Portfolio Summary
 
