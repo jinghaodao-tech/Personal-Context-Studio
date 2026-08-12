@@ -1,45 +1,67 @@
 {
-    "name":  "personal-context-studio",
-    "private":  true,
-    "type":  "module",
-    "scripts":  {
-                    "dev":  "node --experimental-strip-types apps/api/src/server.ts",
-                    "dev:watcher":  "node --experimental-strip-types apps/watcher/src/main.ts",
-                    "dev:supervisor":  "node --experimental-strip-types apps/supervisor/src/main.ts",
-                    "mcp":  "node --experimental-strip-types apps/mcp/src/main.ts",
-                    "cli":  "node --experimental-strip-types apps/cli/src/main.ts",
-                    "adapter":  "node --experimental-strip-types apps/cli/src/main.ts adapter",
-                    "crypto:rekey":  "node --experimental-strip-types scripts/rekey-encryption.mjs",
-                    "ops:diagnostics":  "node scripts/ops-diagnostics.mjs",
-                    "db:diagnostics":  "node scripts/db-diagnostics.mjs",
-                    "db:backup-retention":  "node scripts/plan-backup-retention.mjs",
-                    "db:verify-backup":  "node scripts/verify-backup.mjs",
-                    "ops:watch":  "node scripts/ops-watch.mjs",
-                    "check:packaging":  "node scripts/check-packaging.mjs",
-                    "test":  "node --experimental-strip-types --test test/*.test.ts",
-                    "test:e2e":  "node --experimental-strip-types --test test/browser-e2e.test.ts",
-                    "typecheck":  "tsc --project tsconfig.json",
-                    "check:encoding":  "node scripts/check-encoding.mjs",
-                    "check:migrations":  "node --experimental-strip-types scripts/check-migrations.mjs",
-                    "verify":  "npm run build:contracts \u0026\u0026 npm run typecheck \u0026\u0026 npm run test \u0026\u0026 npm run check:migrations \u0026\u0026 npm run check:encoding",
-                    "verify:ci":  "npm ci \u0026\u0026 npm run verify",
-                    "build:contracts":  "tsc packages/integration-contracts/src/index.ts --target ES2022 --module NodeNext --moduleResolution NodeNext --skipLibCheck --declaration --outDir packages/integration-contracts/dist"
-                },
-    "engines":  {
-                    "node":  "\u003e=24.0.0"
-                },
-    "devDependencies":  {
-                            "@types/node":  "^24.0.0",
-                            "playwright":  "^1.62.1",
-                            "typescript":  "^5.8.3"
-                        },
-    "exports":  {
-                    ".":  "./README.md",
-                    "./integration-contracts":  "./packages/integration-contracts/dist/index.js"
-                },
-    "files":  [
-                  "packages/integration-contracts/dist",
-                  "packages/integration-contracts/package.json",
-                  "README.md"
-              ]
+    "name": "personal-context-studio",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "node --experimental-strip-types apps/api/src/server.ts",
+        "dev:watcher": "node --experimental-strip-types apps/watcher/src/main.ts",
+        "dev:supervisor": "node --experimental-strip-types apps/supervisor/src/main.ts",
+        "mcp": "node --experimental-strip-types apps/mcp/src/main.ts",
+        "cli": "node --experimental-strip-types apps/cli/src/main.ts",
+        "adapter": "node --experimental-strip-types apps/cli/src/main.ts adapter",
+        "crypto:rekey": "node --experimental-strip-types scripts/rekey-encryption.mjs",
+        "ops:diagnostics": "node scripts/ops-diagnostics.mjs",
+        "db:diagnostics": "node scripts/db-diagnostics.mjs",
+        "db:backup-retention": "node scripts/plan-backup-retention.mjs",
+        "db:verify-backup": "node scripts/verify-backup.mjs",
+        "ops:watch": "node scripts/ops-watch.mjs",
+        "check:packaging": "node scripts/check-packaging.mjs",
+        "test": "node --experimental-strip-types --test test/*.test.ts",
+        "test:e2e": "node --experimental-strip-types --test test/browser-e2e.test.ts",
+        "typecheck": "tsc --project tsconfig.json",
+        "check:encoding": "node scripts/check-encoding.mjs",
+        "check:migrations": "node --experimental-strip-types scripts/check-migrations.mjs",
+        "verify": "npm run build:contracts && npm run typecheck && npm run test && npm run check:migrations && npm run check:encoding",
+        "verify:ci": "npm ci && npm run verify",
+        "build:contracts": "tsc packages/integration-contracts/src/index.ts --target ES2022 --module NodeNext --moduleResolution NodeNext --skipLibCheck --declaration --outDir packages/integration-contracts/dist"
+    },
+    "engines": {
+        "node": ">=24.0.0"
+    },
+    "devDependencies": {
+        "@types/node": "^24.0.0",
+        "playwright": "^1.62.1",
+        "typescript": "^5.8.3"
+    },
+    "exports": {
+        ".": "./README.md",
+        "./integration-contracts": "./packages/integration-contracts/dist/index.js"
+    },
+    "files": [
+        "packages/integration-contracts/dist",
+        "packages/integration-contracts/package.json",
+        "README.md"
+    ],
+    "version": "1.0.0",
+    "description": "The current product contract is [docs/current-product-spec.md](docs/current-product-spec.md). The release scope decision is [docs/spec/v1-scope.md](docs/spec/v1-scope.md). Architecture decisions are recorded in [docs/adr](docs/adr) and the main usability notes are in [docs/usability-findings.md](docs/usability-findings.md).",
+    "main": "index.js",
+    "directories": {
+        "doc": "docs",
+        "test": "test"
+    },
+    "dependencies": {
+        "playwright-core": "^1.62.1",
+        "undici-types": "^7.8.0"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/jinghaodao-tech/Personal-Context-Studio.git"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "bugs": {
+        "url": "https://github.com/jinghaodao-tech/Personal-Context-Studio/issues"
+    },
+    "homepage": "https://github.com/jinghaodao-tech/Personal-Context-Studio#readme"
 }
