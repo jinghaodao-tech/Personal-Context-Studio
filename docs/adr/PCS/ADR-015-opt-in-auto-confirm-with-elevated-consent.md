@@ -189,11 +189,26 @@ while adding that coverage:
   event and exclusion from the pending-review queue, and the
   `detectorFresh` staleness fallback to manual review).
 
-Not yet covered: the elevated-consent dialog itself is a client-side UI
-concern with no implementation referenced here, so "re-shown if the field's
-declared sensitivity or the detector's classification changes" is only
-verified at the API layer (see above), not at the UI layer described in
-Decision point 3.
+**Dashboard UI added**: `apps/api/src/dashboard/client.ts`'s `viewTemplate`
+dialog now has an "自動確定" column with a per-field toggle
+(`autoConfirmCell`, `toggleAutoConfirm`). A non-flagged field toggles
+directly; a `409 auto_confirm_elevated_consent_required` response opens a
+dedicated consent dialog (`showAutoConfirmConsent`) carrying Decision point
+3's wording before resubmitting with `elevatedConsent: true`; a
+`409 auto_confirm_requires_normal_sensitivity` response reverts the toggle
+and shows the reason via the existing `note()` mechanism. Verified against
+the running API with `curl` (this environment has no browser to drive): the
+non-flagged path returns `200` directly, the flagged path returns `409`
+without consent and `200` with `elevatedConsent: true`, and
+`GET /v1/context-templates/:id` reflects `auto_confirm_on_ingestion` in both
+cases. No automated UI test exists for this (out of scope per the delegation
+spec in `notes/study-log/2026-08-13-j2-delegation-cycle.md` — this
+environment cannot drive a real browser either). "Re-shown if the field's
+declared sensitivity or the detector's classification changes" is still
+only enforced at the API layer (the `detectorFresh` check plus the
+sensitivity gate) — the dialog is shown on every enable attempt that the API
+flags, not proactively re-shown for an already-enabled field if its
+classification silently drifts, since nothing currently polls for that.
 
 ## Reversal
 
