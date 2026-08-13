@@ -43,35 +43,48 @@ listed explicitly rather than assumed closed.
    than an in-place edit route (none exists in
    `apps/api/src/routes/templates.ts`).
 2. **Entry recording, field-level review, approval, correction, withdrawal**
-   — mostly covered. `test/governance-flow.test.ts` exercises the pending
-   review queue and confirms a rejected value never becomes usable.
-   **Gap:** no test asserts an *unconfirmed* value is excluded from an
-   analysis/export snapshot by count, even though the exclusion logic exists
-   (`apps/api/src/app.ts:198,241-246`). Verify manually until a test is
-   added: create an entry, leave one field unconfirmed, request a snapshot,
-   and confirm that field is absent with an omission reason.
+   — covered. `test/governance-flow.test.ts` exercises the pending review
+   queue and confirms a rejected value never becomes usable.
+   `test/v1-scope-verification.test.ts` ("v1-scope item 2...") closes the
+   remaining gap: it leaves one candidate confirmed and one unconfirmed for
+   the same profile, requests a snapshot through an integration credential,
+   and asserts `excluded.unconfirmed === 1` while the confirmed value is
+   still present and the unconfirmed one is absent from `records` —
+   confirming the exclusion is visible as a count, not just a silent
+   omission.
 3. **`source`, `provenance`, `revision`, `sensitivity`, valid-period
-   metadata** — **gap.** Coverage is scattered across separate tests
-   (revisions, sensitivity, provenance, valid-period each individually), but
-   no single test asserts all five are present together on one confirmed
-   value. Verify manually: confirm one field end-to-end and inspect the
-   stored value for all five attributes at once, not just the ones a given
-   test happens to check.
-4. **Management API / Integration API separation** — partially covered.
+   metadata** — covered. `test/v1-scope-verification.test.ts` ("v1-scope
+   item 3...") creates two conflicting confirmed values for one field,
+   resolves the conflict manually with an explicit `validFrom`/`validTo`
+   window and sensitivity override, and asserts all five attributes
+   together on that one value in a single test: `source`/`source_id` from
+   the entry detail, `sensitivity` from the same response, a `correction`
+   revision (distinct from the `initial` one) carrying the `valid_from`/
+   `valid_to` window, and a `candidate_extracted` event on the separate
+   provenance audit trail. Previously this coverage existed but was
+   scattered across separate tests that never checked all five together.
+4. **Management API / Integration API separation** — covered.
    `test/integration-access.test.ts` confirms an integration-scoped token
-   gets 401 on a management-only GET. **Gap:** no test attempts a write or
-   delete action (e.g. template deletion) with an integration-scoped
-   credential. Verify manually until a test is added: attempt a
-   destructive management action using only integration credentials and
-   confirm it is rejected, not just reads.
+   gets 401 on a management-only GET. `test/v1-scope-verification.test.ts`
+   ("v1-scope item 4...") closes the write/delete gap: it attempts a
+   template archive and an integration-client revoke using only
+   integration-scoped credentials, confirms both are rejected with 401
+   `management_authorization_required`, and confirms neither action
+   actually happened (the template is still active, the client is still
+   listed as active) — not just that the response looked like a rejection.
 5. **Markdown recording continues when local AI is stopped/unavailable** —
-   **gap, no automated coverage.** `packages/ai-core/src/index.ts` defines a
-   `disabled` provider but no test exercises it by name, and no test stops
-   `/v1/local-ai` and checks the watcher still indexes new saves. Verify
-   manually: stop or leave local AI disabled, save a new Markdown file, and
-   confirm it is indexed and available for Review as usual.
+   covered, with a real bug found and fixed along the way.
+   `packages/ai-core/src/index.ts` defined a `disabled` provider class, but
+   `createLocalAiProvider()` had no branch that ever returned it — it was
+   unreachable through any `PCS_AI_PROVIDER` value, not just untested. Fixed
+   by adding the missing `if (config.provider === "disabled")` branch.
+   `test/local-ai-disabled.test.ts` now covers both the unit level (the
+   provider is selectable, reports `available:false`/`errorCode:"disabled"`,
+   and rejects extraction) and the full behavioral guarantee: with AI
+   disabled and `/v1/local-ai/stop` called, a Markdown file is still saved,
+   indexed, findable via full-text search, and usable end-to-end through the
+   normal Review flow (manual candidate → pending queue → accepted).
 
-Items 2 (partially), 3, 4 (partially), and 5 rely on manual verification
-today. This is a real gap between "documented as v1" and "proven as v1,"
-not just a formality — closing it means either running the manual checks
-above and recording the result, or adding the missing automated tests.
+Items 2, 3, 4, and 5 are now covered by `test/v1-scope-verification.test.ts`
+and `test/local-ai-disabled.test.ts` (2026-08-13), closing every gap this
+Verification section previously listed.

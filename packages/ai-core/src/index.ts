@@ -115,6 +115,7 @@ class OpenAiCompatibleProvider implements LocalAiProvider {
 
 export function createLocalAiProvider(config: { provider?: string; model?: string; baseUrl?: string } = {}): LocalAiProvider {
   if (config.provider === "mock") return new MockProvider();
+  if (config.provider === "disabled") return new DisabledProvider();
   if (config.provider === "manual") return new ManualProvider();
   if (config.provider === "ollama") return new OpenAiCompatibleProvider(config.baseUrl ?? "http://127.0.0.1:11434/v1", config.model ?? "llama3.2");
   if (config.provider === "openai-compatible-local") return new OpenAiCompatibleProvider(config.baseUrl ?? "http://127.0.0.1:1234/v1", config.model ?? "local-model");
