@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+﻿import type { DatabaseSync } from "node:sqlite";
 
 type Migration = { version: string; apply: () => void };
 
@@ -212,7 +212,17 @@ export function applyMigrations(db: DatabaseSync, schemaSql: string) {
       db.exec("INSERT INTO context_value_revisions(id,value_id,entry_id,field_key,value_json,encrypted,change_type,reason,valid_from,valid_to,sharing,sensitivity,supersedes_revision_id,source_id,source_content_hash,user_confirmed,confirmation_mode,measurement_json,confirmed_at,created_at) SELECT id,value_id,entry_id,field_key,value_json,encrypted,change_type,reason,valid_from,valid_to,sharing,sensitivity,supersedes_revision_id,source_id,source_content_hash,user_confirmed,COALESCE(confirmation_mode,'user_confirmed'),COALESCE(measurement_json,'{}'),confirmed_at,created_at FROM context_value_revisions_legacy");
       db.exec("DROP TABLE context_value_revisions_legacy; CREATE INDEX IF NOT EXISTS context_value_revisions_value_idx ON context_value_revisions(value_id,created_at DESC); CREATE INDEX IF NOT EXISTS context_value_revisions_entry_field_idx ON context_value_revisions(entry_id,field_key,created_at DESC); PRAGMA foreign_keys=ON;");
     } },
-  ];
+    { version: "023_opt_in_auto_confirm_elevated_consent", apply: () => {
+      const addColumn = (table: string, column: string, definition: string) => {
+        const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+        if (!columns.some((item) => item.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+      };
+      addColumn("context_template_fields", "auto_confirm_on_ingestion", "INTEGER NOT NULL DEFAULT 0");
+      addColumn("context_template_fields", "auto_confirm_consent_granted_at", "TEXT");
+      addColumn("context_template_fields", "auto_confirm_detector_version", "TEXT");
+      addColumn("context_template_fields", "auto_confirm_detector_flagged", "INTEGER NOT NULL DEFAULT 0");
+      db.exec("CREATE INDEX IF NOT EXISTS context_template_fields_auto_confirm_idx ON context_template_fields(template_id,auto_confirm_on_ingestion)");
+    } },  ];
   const applied = new Set((db.prepare("SELECT version FROM schema_migrations").all() as Array<{ version: string }>).map((row) => row.version));
   for (const migration of migrations) {
     if (applied.has(migration.version)) continue;
@@ -227,3 +237,4 @@ export function applyMigrations(db: DatabaseSync, schemaSql: string) {
     }
   }
 }
+

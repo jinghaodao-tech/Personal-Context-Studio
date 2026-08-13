@@ -1,8 +1,9 @@
-import type { IncomingMessage, ServerResponse } from "node:http";
+﻿import type { IncomingMessage, ServerResponse } from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 import { matchIntegrationFields, validateField, type ContextTemplateField } from "../../../../packages/domain/src/index.ts";
 import { validateIntegrationTemplateRequest, type IntegrationTemplateRequestV1 } from "../../../../packages/integration-contracts/src/index.ts";
 import { validateTemplateDraft } from "../../../../packages/ai-core/src/index.ts";
+import { autoConfirmClassification, autoConfirmAllowed } from "../autoConfirm.ts";
 
 export type TemplateRouteContext = {
   db: DatabaseSync;
@@ -19,7 +20,18 @@ export type TemplateRouteContext = {
 };
 
 export async function handleTemplateRoute(request: IncomingMessage, response: ServerResponse, url: URL, parts: string[], context: TemplateRouteContext): Promise<boolean> {
-  const { db, send, body, text, now, newId, audit, provenance, templateDetail, integrationAuthorized, localAiProvider } = context;
+  const { db, send, body, text, now, newId, audit, provenance, templateDetail, integrationAuthorized, localAiProvider } = context;  if (request.method === "POST" && /^v1\/context-templates\/[^/]+\/fields\/[^/]+\/auto-confirm$/.test(parts.join("/"))) {
+    const templateId = parts[2]; const fieldKey = parts[4]; const field = db.prepare("SELECT * FROM context_template_fields WHERE template_id=? AND field_key=?").get(templateId, fieldKey) as any;
+    if (!field) { send(response, 404, { error: "template_field_not_found" }); return true; }
+    const input = await body(request); const enabled = input.enabled === true; const classification = autoConfirmClassification(field.field_key, field.label, field.description);
+    const allowed = autoConfirmAllowed({ enabled, sensitivity: field.sensitivity, detectorFlagged: classification.flagged, elevatedConsent: input.elevatedConsent === true });
+    if (!allowed.ok) { send(response, 409, { error: allowed.error, detectorVersion: classification.detectorVersion, detectorFlagged: classification.flagged }); return true; }
+    const timestamp = now(); const consentAt = enabled && classification.flagged ? timestamp : (enabled ? field.auto_confirm_consent_granted_at : null);
+    db.prepare("UPDATE context_template_fields SET auto_confirm_on_ingestion=?,auto_confirm_consent_granted_at=?,auto_confirm_detector_version=?,auto_confirm_detector_flagged=? WHERE template_id=? AND field_key=?").run(enabled ? 1 : 0, consentAt, classification.detectorVersion, classification.flagged ? 1 : 0, templateId, fieldKey);
+    audit(enabled ? "enable_auto_confirm" : "disable_auto_confirm", { templateId, fieldKey, detectorVersion: classification.detectorVersion, detectorFlagged: classification.flagged });
+    provenance({ subjectType: "template_field", subjectId: `${templateId}:${fieldKey}`, eventType: enabled ? "auto_confirm_enabled" : "auto_confirm_disabled", actorType: "user", metadata: { detectorVersion: classification.detectorVersion, detectorFlagged: classification.flagged, elevatedConsent: input.elevatedConsent === true } });
+    send(response, 200, { templateId, fieldKey, enabled, detectorVersion: classification.detectorVersion, detectorFlagged: classification.flagged, elevatedConsentRequired: classification.flagged }); return true;
+  }
   if (request.method === "POST" && parts.join("/").match(/^v1\/integration-template-requests\/[^/]+\/(approve|approve_with_edits|reject)$/)) {
     const action = parts[3];
     const item = db.prepare("SELECT * FROM integration_template_requests WHERE id=?").get(parts[2]) as any;
@@ -186,3 +198,5 @@ export async function handleTemplateRoute(request: IncomingMessage, response: Se
   if (request.method === "POST" && parts.join("/").match(/^v1\/context-templates\/[^/]+\/archive$/)) { const updated = db.prepare("UPDATE context_templates SET status='archived',updated_at=? WHERE id=? AND status='draft'").run(now(), parts[2]); if (!updated.changes) { send(response, 404, { error: "template_not_found_or_not_draft" }); return true; } audit("archive_template", { templateId: parts[2] }); send(response, 200, { archived: true }); return true; }
   return false;
 }
+
+
