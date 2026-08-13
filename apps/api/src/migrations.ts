@@ -222,6 +222,18 @@ export function applyMigrations(db: DatabaseSync, schemaSql: string) {
       addColumn("context_template_fields", "auto_confirm_detector_version", "TEXT");
       addColumn("context_template_fields", "auto_confirm_detector_flagged", "INTEGER NOT NULL DEFAULT 0");
       db.exec("CREATE INDEX IF NOT EXISTS context_template_fields_auto_confirm_idx ON context_template_fields(template_id,auto_confirm_on_ingestion)");
+    } },
+    { version: "024_provenance_template_field_subject", apply: () => {
+      const table = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='context_provenance'").get() as { sql?: string } | undefined;
+      if (!table?.sql || table.sql.includes("'template_field'")) return;
+      // The 023 auto-confirm endpoint writes provenance events with subjectType "template_field" on
+      // every successful enable/disable call, but the original CHECK constraint never allowed it --
+      // every such call failed with a CHECK constraint violation. Widen the constraint the same way
+      // 022_remeasurement_revision_type did: rename, recreate with the wider CHECK, copy, drop.
+      db.exec("PRAGMA foreign_keys=OFF; ALTER TABLE context_provenance RENAME TO context_provenance_legacy;");
+      db.exec("CREATE TABLE context_provenance (id TEXT PRIMARY KEY, subject_type TEXT NOT NULL CHECK(subject_type IN('document','entry','value','template','template_field','export','integration_import','backup')), subject_id TEXT NOT NULL, event_type TEXT NOT NULL, actor_type TEXT NOT NULL CHECK(actor_type IN('user','local_ai','integration','system')), source_ref TEXT, source_content_hash TEXT, provider_id TEXT, model TEXT, payload_hash TEXT, metadata_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL) STRICT");
+      db.exec("INSERT INTO context_provenance(id,subject_type,subject_id,event_type,actor_type,source_ref,source_content_hash,provider_id,model,payload_hash,metadata_json,created_at) SELECT id,subject_type,subject_id,event_type,actor_type,source_ref,source_content_hash,provider_id,model,payload_hash,metadata_json,created_at FROM context_provenance_legacy");
+      db.exec("DROP TABLE context_provenance_legacy; CREATE INDEX IF NOT EXISTS context_provenance_subject_idx ON context_provenance(subject_type,subject_id,created_at DESC); CREATE INDEX IF NOT EXISTS context_provenance_source_idx ON context_provenance(source_ref,created_at DESC); PRAGMA foreign_keys=ON;");
     } },  ];
   const applied = new Set((db.prepare("SELECT version FROM schema_migrations").all() as Array<{ version: string }>).map((row) => row.version));
   for (const migration of migrations) {
