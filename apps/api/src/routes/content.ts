@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { DatabaseSync } from "node:sqlite";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { validateIntegrationImport } from "../../../../packages/integration-contracts/src/index.ts";
 import { renderMarkdownTemplate, templateMarker } from "../../../../packages/documents/src/template.ts";
 
@@ -24,6 +25,8 @@ export type ContentRouteContext = {
   randomToken: () => string;
   decodedJson: (row: { value_json: string }) => unknown;
   templateDetail: (id: string) => any;
+  destinationHost: (value: string) => string;
+  activeExternalAiConsent: (scope: "document" | "field", providerId: string, host: string, documentId?: string, templateId?: string, fieldKey?: string) => boolean;
 };
 
 export async function handleContentRoute(
@@ -33,7 +36,7 @@ export async function handleContentRoute(
   parts: string[],
   context: ContentRouteContext,
 ): Promise<boolean> {
-  const { db, send, body, text, now, newId, audit, provenance, notesRoot, readMarkdownSnapshot, excerpt, ftsTerms, upsertDocument, integrationPermissions, integrationAuthorized, hashIntegrationToken, randomToken, decodedJson, templateDetail } = context;
+  const { db, send, body, text, now, newId, audit, provenance, notesRoot, readMarkdownSnapshot, excerpt, ftsTerms, upsertDocument, integrationPermissions, integrationAuthorized, hashIntegrationToken, randomToken, decodedJson, templateDetail, destinationHost, activeExternalAiConsent } = context;
 
   if (request.method === "GET" && url.pathname === "/v1/integration-clients") {
     const items = db.prepare("SELECT id,name,permissions_json,is_active,created_at,updated_at FROM integration_clients ORDER BY created_at DESC").all() as any[];
@@ -59,8 +62,35 @@ export async function handleContentRoute(
 
   if (request.method === "GET" && url.pathname === "/v1/documents") { send(response, 200, { items: db.prepare("SELECT id,file_path,title,recorded_at,source_updated_at,content_hash,file_size,created_at,updated_at FROM context_documents WHERE archived_at IS NULL ORDER BY recorded_at DESC").all() }); return true; }
   if (request.method === "POST" && url.pathname === "/v1/documents") { const input = await body(request); const filePath = text(input.filePath); if (!filePath) { send(response, 400, { error: "document_path_required" }); return true; } const result = upsertDocument(filePath) as any; send(response, result.created ? 201 : 200, result); return true; }
+  if (request.method === "POST" && url.pathname === "/v1/documents/raw") {
+    const input = await body(request); const content = typeof input.content === "string" ? input.content : "";
+    if (!content.trim()) { send(response, 400, { error: "document_content_required" }); return true; }
+    const title = text(input.title).replaceAll(/[\r\n]+/g, " ").trim();
+    let recordedAt = "";
+    if (typeof input.recordedAt === "string" && input.recordedAt.trim() && !Number.isNaN(Date.parse(input.recordedAt))) recordedAt = new Date(input.recordedAt).toISOString();
+    const frontmatterLines = ["---", ...(title ? [`title: ${title}`] : []), ...(recordedAt ? [`recorded_at: ${recordedAt}`] : []), "---", ""];
+    const fileContent = `${frontmatterLines.join("\n")}\n${content.endsWith("\n") ? content : `${content}\n`}`;
+    const directory = join(notesRoot, "webai-import"); mkdirSync(directory, { recursive: true });
+    const relativePath = `webai-import/${newId("webai-import")}.md`;
+    writeFileSync(join(notesRoot, relativePath), fileContent, "utf8");
+    const result = upsertDocument(relativePath) as any;
+    audit("import_raw_document_from_external_ai", { documentId: result.id, filePath: relativePath });
+    provenance({ subjectType: "document", subjectId: result.id, eventType: "imported_from_external_ai", actorType: "user", sourceRef: relativePath, sourceContentHash: result.contentHash, metadata: { title: title || undefined, recordedAt: recordedAt || undefined } });
+    send(response, 201, result); return true;
+  }
   if (request.method === "GET" && parts[0] === "v1" && parts[1] === "documents" && parts.length === 3) { const item = db.prepare("SELECT * FROM context_documents WHERE id=? AND archived_at IS NULL").get(parts[2]); send(response, item ? 200 : 404, item ? { item } : { error: "document_not_found" }); return true; }
   if (request.method === "GET" && parts[0] === "v1" && parts[1] === "documents" && parts[2] && parts[3] === "excerpt") { const item = db.prepare("SELECT file_path FROM context_documents WHERE id=? AND archived_at IS NULL").get(parts[2]) as any; if (!item) { send(response, 404, { error: "document_not_found" }); return true; } const snapshot = readMarkdownSnapshot(notesRoot, item.file_path); send(response, 200, { documentId: parts[2], filePath: snapshot.relativePath, contentHash: snapshot.contentHash, excerpt: excerpt(snapshot.content, Number(url.searchParams.get("maxCharacters") ?? 2000)) }); return true; }
+  if (request.method === "GET" && parts[0] === "v1" && parts[1] === "documents" && parts[2] && parts[3] === "export-for-external-ai") {
+    const item = db.prepare("SELECT file_path FROM context_documents WHERE id=? AND archived_at IS NULL").get(parts[2]) as any;
+    if (!item) { send(response, 404, { error: "document_not_found" }); return true; }
+    const providerId = text(url.searchParams.get("providerId")); const host = destinationHost(text(url.searchParams.get("destinationHost")));
+    if (!providerId || !host) { send(response, 400, { error: "external_ai_export_invalid" }); return true; }
+    if (!activeExternalAiConsent("document", providerId, host, parts[2])) { send(response, 403, { error: "external_ai_consent_required", providerId, destinationHost: host }); return true; }
+    const snapshot = readMarkdownSnapshot(notesRoot, item.file_path);
+    audit("export_document_for_external_ai", { documentId: parts[2], providerId, destinationHost: host, contentHash: snapshot.contentHash });
+    provenance({ subjectType: "document", subjectId: parts[2], eventType: "exported_for_external_ai", actorType: "user", sourceRef: snapshot.relativePath, sourceContentHash: snapshot.contentHash, metadata: { providerId, destinationHost: host } });
+    send(response, 200, { documentId: parts[2], filePath: snapshot.relativePath, contentHash: snapshot.contentHash, providerId, destinationHost: host, content: snapshot.content }); return true;
+  }
   if (request.method === "POST" && parts[0] === "v1" && parts[1] === "integration" && parts[2] === "documents" && parts[3] && parts[4] === "template-apply") {
     if (!integrationAuthorized(db, request, "append_markdown_template")) { send(response, 403, { error: "integration_permission_forbidden" }); return true; }
     const input = await body(request); if (input.approved !== true) { send(response, 400, { error: "template_application_approval_required" }); return true; }
