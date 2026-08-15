@@ -1,0 +1,29 @@
+﻿import test from "node:test";
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+const required = ["active_minutes", "ai_conversation_minutes", "deep_thinking_minutes", "window_switch_count", "idle_minutes", "away_minutes"];
+const measurement = { definitionVersion: "dev-pace-v1", sourceTool: "dev-pace", sourceToolVersion: "1.0.0", measuredAt: "2026-08-15T12:00:00.000Z" };
+const values = { active_minutes: 10, ai_conversation_minutes: 20, deep_thinking_minutes: 30, window_switch_count: 4, idle_minutes: 5, away_minutes: 6 };
+test("accept-machine-measurement validates, writes machine provenance atomically, and is idempotent", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "pcs-machine-measurement-")); const port = 20150 + Math.floor(Math.random() * 100);
+  const child = spawn(process.execPath, ["--experimental-strip-types", "apps/api/src/server.ts"], { env: { ...process.env, PCS_PORT: String(port), PCS_DB: join(directory, "context.sqlite3"), PCS_NOTES_DIR: join(directory, "notes"), PCS_BACKUP_DIR: join(directory, "backups") }, stdio: "ignore" });
+  const api = async (path: string, method = "GET", value?: unknown) => { const response = await fetch(`http://127.0.0.1:${port}${path}`, { method, headers: value === undefined ? undefined : { "content-type": "application/json" }, body: value === undefined ? undefined : JSON.stringify(value) }); return { response, body: await response.json() as any }; };
+  let db: DatabaseSync | undefined;
+  try {
+    let ready = false; for (let i = 0; i < 100 && !ready; i += 1) { try { ready = (await fetch(`http://127.0.0.1:${port}/health`)).ok; } catch {} await new Promise((resolve) => setTimeout(resolve, 100)); } assert.equal(ready, true);
+    const template = await api("/v1/context-templates", "POST", { name: "dev-pace-daily-v1", purpose: "self_understanding", fields: required.map((fieldKey, index) => ({ fieldKey, label: fieldKey, valueType: "number", required: true, displayOrder: index + 1, sharingDefault: "purpose_only", sensitivity: "normal", analysisRole: "outcome", analysisRoleConfirmed: true, analysisUsage: "outcome", analysisMergeAllowed: true, reason: "Machine measurement" })) }); assert.equal(template.response.status, 201); const templateId = template.body.item.id; assert.equal((await api(`/v1/context-templates/${templateId}/activate`, "POST")).response.status, 200);
+    db = new DatabaseSync(join(directory, "context.sqlite3")); const seed = (id: string, payload: Record<string, unknown>) => db!.prepare("INSERT INTO integration_import_records(id,source_system,source_import_id,source_reference_id,payload_json,decision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)").run(id, "dev_pace", id, "dev-pace:2026-08-15", JSON.stringify(payload), "pending", "2026-08-15T12:00:00.000Z", "2026-08-15T12:00:00.000Z");
+    seed("import-valid", { date: "2026-08-15", ...values, measurement }); const accepted = await api("/v1/integration-imports/import-valid/accept-machine-measurement", "POST", { templateId }); assert.equal(accepted.response.status, 201); assert.equal(accepted.body.fieldCount, 6); assert.equal((db.prepare("SELECT COUNT(*) AS count FROM context_values WHERE source='integration_import' AND confirmation_mode='machine_measured'").get() as any).count, 6); assert.equal((db.prepare("SELECT COUNT(*) AS count FROM context_value_revisions WHERE confirmation_mode='machine_measured'").get() as any).count, 6); assert.equal((db.prepare("SELECT decision FROM integration_import_records WHERE id='import-valid'").get() as any).decision, "accepted");
+    const duplicate = await api("/v1/integration-imports/import-valid/accept-machine-measurement", "POST", { templateId }); assert.equal(duplicate.response.status, 200); assert.equal(duplicate.body.duplicate, true);
+    seed("import-bad-source", { date: "2026-08-15", ...values, measurement: { ...measurement, sourceTool: "Dev-Pace" } }); const badSource = await api("/v1/integration-imports/import-bad-source/accept-machine-measurement", "POST", { templateId }); assert.equal(badSource.response.status, 422); assert.equal(badSource.body.error, "machine_measurement_metadata_invalid");
+    seed("import-bad-date", { date: "2026/08/15", ...values, measurement }); const badDate = await api("/v1/integration-imports/import-bad-date/accept-machine-measurement", "POST", { templateId }); assert.equal(badDate.response.status, 422); assert.equal(badDate.body.error, "machine_measurement_date_invalid");
+    seed("import-bad-value", { date: "2026-08-15", ...values, away_minutes: -1, measurement }); const badValue = await api("/v1/integration-imports/import-bad-value/accept-machine-measurement", "POST", { templateId }); assert.equal(badValue.response.status, 422); assert.equal(badValue.body.error, "machine_measurement_value_invalid");
+    seed("import-missing-field", { date: "2026-08-15", active_minutes: 10, ai_conversation_minutes: 20, deep_thinking_minutes: 30, window_switch_count: 4, idle_minutes: 5, measurement }); const missing = await api("/v1/integration-imports/import-missing-field/accept-machine-measurement", "POST", { templateId }); assert.equal(missing.response.status, 422); assert.equal(missing.body.error, "machine_measurement_value_invalid"); assert.equal((db.prepare("SELECT COUNT(*) AS count FROM context_entries").get() as any).count, 1);
+  } finally { db?.close(); child.kill(); await new Promise((resolve) => setTimeout(resolve, 150)); rmSync(directory, { recursive: true, force: true }); }
+});
+
+

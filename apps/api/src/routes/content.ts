@@ -133,7 +133,7 @@ export async function handleContentRoute(
         const revisionId = newId("revision");
         const json = JSON.stringify(field.value);
         const measurementJson = JSON.stringify(measurement);
-        db.prepare("INSERT INTO context_values(id,entry_id,field_key,value_json,encrypted,source,source_id,user_confirmed,confirmation_mode,measurement_json,sharing,sensitivity,lifecycle_state,recorded_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(valueId, entryId, field.field_key, json, 0, "metheory_import", imported.id, 0, "machine_measured", measurementJson, field.sharing_default, field.sensitivity, "active", `${date}T00:00:00.000Z`, timestamp);
+        db.prepare("INSERT INTO context_values(id,entry_id,field_key,value_json,encrypted,source,source_id,user_confirmed,confirmation_mode,measurement_json,sharing,sensitivity,lifecycle_state,recorded_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(valueId, entryId, field.field_key, json, 0, "integration_import", imported.id, 0, "machine_measured", measurementJson, field.sharing_default, field.sensitivity, "active", `${date}T00:00:00.000Z`, timestamp);
         db.prepare("INSERT INTO context_value_revisions(id,value_id,entry_id,field_key,value_json,encrypted,change_type,reason,sharing,sensitivity,source_id,source_content_hash,user_confirmed,confirmation_mode,measurement_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(revisionId, valueId, entryId, field.field_key, json, 0, "initial", "Initial machine measurement import", field.sharing_default, field.sensitivity, imported.id, null, 0, "machine_measured", measurementJson, timestamp);
         db.prepare("UPDATE context_values SET current_revision_id=? WHERE id=?").run(revisionId, valueId);
       }
@@ -147,3 +147,4 @@ export async function handleContentRoute(
   if (request.method === "POST" && parts.join("/").match(/^v1\/integration-imports\/[^/]+\/decision$/)) { const input = await body(request); const decision = text(input.decision); if (!["accepted", "edited_and_accepted", "held", "rejected"].includes(decision)) { send(response, 400, { error: "integration_import_decision_invalid" }); return true; } const result = db.prepare("UPDATE integration_import_records SET decision=?,target_template_id=?,target_field_key=?,updated_at=? WHERE id=?").run(decision, text(input.templateId) || null, text(input.fieldKey) || null, now(), parts[2]); audit("decide_integration_import", { importId: parts[2], decision }); send(response, result.changes ? 200 : 404, result.changes ? { decision } : { error: "integration_import_not_found" }); return true; }
   return false;
 }
+
