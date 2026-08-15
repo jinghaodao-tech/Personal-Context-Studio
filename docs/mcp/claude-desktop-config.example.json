@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "personal-context-studio": {
+      "command": "node",
+      "args": [
+        "--experimental-strip-types",
+        "C:\\Users\\<your-user>\\Personal-Context-Studio\\apps\\mcp\\src\\main.ts"
+      ],
+      "env": {
+        "PCS_API_URL": "http://127.0.0.1:8300",
+        "PCS_CLIENT_ID": "<integration-client-id>",
+        "PCS_CLIENT_TOKEN": "<integration-client-token>"
+      }
+    }
+  }
+}

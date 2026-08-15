@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { spawn } from "node:child_process";
+import { createServer } from "node:http";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -58,14 +59,25 @@ test("Markdown documents stay in the configured root and use canonical dates", (
 });
 
 test("MCP surface exposes read-only tools", async () => {
-  const child = spawnMcp();
+  const api = createServer((request, response) => {
+    if (request.url?.startsWith("/v1/context/analysis-snapshot") && request.headers.authorization === "Bearer test-token") {
+      response.writeHead(200, { "content-type": "application/json" }); response.end(JSON.stringify({ schemaVersion: "pcs-context-analysis-snapshot-v1", generatedAt: "2026-08-16T00:00:00.000Z", records: [], excluded: { unconfirmed: 0, nonShareable: 0, invalid: 0 } })); return;
+    }
+    response.writeHead(404); response.end();
+  });
+  await new Promise<void>((resolve) => api.listen(0, "127.0.0.1", resolve));
+  const address = api.address(); const port = typeof address === "object" && address ? address.port : 0;
+  const child = spawnMcp({ PCS_API_URL: `http://127.0.0.1:${port}`, PCS_CLIENT_ID: "client_test", PCS_CLIENT_TOKEN: "test-token" });
   try {
     const response = await child.request({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
     const names = response.result.tools.map((tool: { name: string }) => tool.name);
     assert.deepEqual(names, ["list_reviewed_context"]);
     assert.equal(names.some((name: string) => /create|update|delete|write/.test(name)), false);
+    const call = await child.request({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "list_reviewed_context", arguments: { profileId: "profile_test" } } });
+    assert.equal(call.result.isError, undefined);
+    assert.deepEqual(call.result.structuredContent.records, []);
   } finally {
-    child.close();
+    child.close(); api.close();
   }
 });
 
@@ -81,8 +93,8 @@ test("PCS-owned AI providers and extraction stay local or explicit", async () =>
   await assert.rejects(() => new RuntimeManager().start(), /runtime_executable_unavailable/);
 });
 
-function spawnMcp() {
-  const child = spawn(process.execPath, ["--experimental-strip-types", "apps/mcp/src/main.ts"], { stdio: ["pipe", "pipe", "ignore"] });
+function spawnMcp(environment: Record<string, string> = {}) {
+  const child = spawn(process.execPath, ["--experimental-strip-types", "apps/mcp/src/main.ts"], { env: { ...process.env, ...environment }, stdio: ["pipe", "pipe", "ignore"] });
   child.stdout.setEncoding("utf8");
   let buffer = "";
   const waiting: Array<(value: any) => void> = [];

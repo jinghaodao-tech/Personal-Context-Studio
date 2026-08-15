@@ -194,6 +194,13 @@ update, delete, or arbitrary SQL tools. Configure Codex or Claude Code to run
 `node --experimental-strip-types <PCS path>\apps\mcp\src\main.ts`, with
 `PCS_API_URL` in the MCP process environment.
 
+For Claude Desktop, copy and edit
+[`docs/mcp/claude-desktop-config.example.json`](docs/mcp/claude-desktop-config.example.json).
+Create an Integration client with the minimum `read_snapshot` permission and a
+profile scope, then put its returned ID and token in the two placeholders. The
+MCP process exposes `list_reviewed_context` only when both credentials are
+present; credentials are never committed to the repository.
+
 ## Local AI and external-AI consent
 
 Local template generation and document extraction now belong to PCS. Configure
