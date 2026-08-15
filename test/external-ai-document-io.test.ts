@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 test("raw document import and external-ai export follow ADR-016 (no import gate, consent-gated full export)", async () => {
   const directory = mkdtempSync(join(tmpdir(), "pcs-external-ai-io-"));
-  const port = 20250 + Math.floor(Math.random() * 100);
+  const port = 21008;
   const child = spawn(process.execPath, ["--experimental-strip-types", "apps/api/src/server.ts"], {
     env: { ...process.env, PCS_PORT: String(port), PCS_DB: join(directory, "context.sqlite3"), PCS_NOTES_DIR: join(directory, "notes"), PCS_BACKUP_DIR: join(directory, "backups") },
     stdio: "ignore",

@@ -10,7 +10,7 @@ test("review, purpose-limited sharing, export history, conflicts, reconfirmation
   const notes = join(directory, "notes");
   mkdirSync(notes, { recursive: true });
   writeFileSync(join(notes, "work.md"), "# Work\nI had focused energy.", "utf8");
-  const port = 19350 + Math.floor(Math.random() * 200);
+  const port = 21013;
   const environment = { ...process.env, PCS_PORT: String(port), PCS_DB: join(directory, "context.sqlite3"), PCS_NOTES_DIR: notes, PCS_BACKUP_DIR: join(directory, "backups") };
   let child = spawn(process.execPath, ["--experimental-strip-types", "apps/api/src/server.ts"], { env: environment, stdio: "ignore" });
   const api = async (path: string, method = "GET", value?: unknown) => {

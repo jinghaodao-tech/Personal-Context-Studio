@@ -8,7 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 
 test("local API keeps imports pending and omits non-shareable context", async () => {
   const directory = mkdtempSync(join(tmpdir(), "pcs-api-"));
-  const port = 18500 + Math.floor(Math.random() * 200);
+  const port = 21002;
   const databasePath = join(directory, "context.sqlite3");
   const child = spawn(process.execPath, ["--experimental-strip-types", "apps/api/src/server.ts"], { env: { ...process.env, PCS_PORT: String(port), PCS_DB: databasePath, PCS_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64") }, stdio: "ignore" });
   const url = (path: string) => `http://127.0.0.1:${port}${path}`;
@@ -39,7 +39,7 @@ test("local documents feed reviewed analysis snapshots and generic integration t
   mkdirSync(join(notesDirectory, "daily"), { recursive: true });
   const notePath = join(notesDirectory, "daily", "2026-07-01.md");
   writeFileSync(notePath, "---\nrecorded_at: 2026-07-01T09:00:00.000Z\ntitle: Work day\n---\nI had energy for focused work.", "utf8");
-  const port = 18750 + Math.floor(Math.random() * 200);
+  const port = 21003;
   const child = spawn(process.execPath, ["--experimental-strip-types", "apps/api/src/server.ts"], { env: { ...process.env, PCS_PORT: String(port), PCS_DB: join(directory, "context.sqlite3"), PCS_NOTES_DIR: notesDirectory }, stdio: "ignore" });
   const api = async (path: string, method = "GET", value?: unknown, extraHeaders?: Record<string, string>) => {
     const response = await fetch(`http://127.0.0.1:${port}${path}`, { method, headers: { ...(value ? { "content-type": "application/json" } : {}), ...extraHeaders }, body: value ? JSON.stringify(value) : undefined });
@@ -128,7 +128,7 @@ test("watcher indexes stable Markdown files and archives deleted files", async (
   const notesDirectory = join(directory, "notes");
   mkdirSync(notesDirectory, { recursive: true });
   writeFileSync(join(notesDirectory, "watched.md"), "# Watched\nstable content", "utf8");
-  const port = 18950 + Math.floor(Math.random() * 200);
+  const port = 21004;
   const environment = { ...process.env, PCS_PORT: String(port), PCS_DB: join(directory, "context.sqlite3"), PCS_NOTES_DIR: notesDirectory, PCS_API_URL: `http://127.0.0.1:${port}`, PCS_WATCH_INTERVAL_MS: "500", PCS_WATCH_STATE: join(directory, "watcher-state.json") };
   const apiProcess = spawn(process.execPath, ["--experimental-strip-types", "apps/api/src/server.ts"], { env: environment, stdio: "ignore" });
   let watcher: ReturnType<typeof spawn> | undefined;
@@ -169,7 +169,7 @@ test("watcher indexes stable Markdown files and archives deleted files", async (
 
 test("confirmed values retain append-only revisions and safe deletion is planned", async () => {
   const directory = mkdtempSync(join(tmpdir(), "pcs-revisions-"));
-  const port = 19150 + Math.floor(Math.random() * 200);
+  const port = 21005;
   const child = spawn(process.execPath, ["--experimental-strip-types", "apps/api/src/server.ts"], { env: { ...process.env, PCS_PORT: String(port), PCS_DB: join(directory, "context.sqlite3") }, stdio: "ignore" });
   const api = async (path: string, method = "GET", value?: unknown) => {
     const response = await fetch(`http://127.0.0.1:${port}${path}`, { method, headers: value ? { "content-type": "application/json" } : undefined, body: value ? JSON.stringify(value) : undefined });

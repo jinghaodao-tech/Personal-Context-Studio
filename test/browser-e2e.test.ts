@@ -9,7 +9,7 @@ import { chromium } from "playwright";
 test("dashboard completes the six core experience scenarios in a real browser", async () => {
   const directory = mkdtempSync(join(tmpdir(), "pcs-browser-"));
   const notes = join(directory, "notes"); mkdirSync(notes, { recursive: true });
-  const port = 19800 + Math.floor(Math.random() * 100);
+  const port = 21012;
   const child: ChildProcess = spawn(process.execPath, ["--experimental-strip-types", "apps/api/src/server.ts"], {
     env: { ...process.env, PCS_PORT: String(port), PCS_DB: join(directory, "context.sqlite3"), PCS_NOTES_DIR: notes },
     stdio: "ignore",

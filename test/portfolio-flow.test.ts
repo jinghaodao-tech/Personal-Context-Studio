@@ -8,7 +8,7 @@ import { join } from "node:path";
 test("browser portfolio APIs keep template versions immutable and export previews bounded", async () => {
   const directory = mkdtempSync(join(tmpdir(), "pcs-portfolio-"));
   const notes = join(directory, "notes"); mkdirSync(notes, { recursive: true });
-  const port = 19600 + Math.floor(Math.random() * 150);
+  const port = 21018;
   const env = { ...process.env, PCS_PORT: String(port), PCS_DB: join(directory, "context.sqlite3"), PCS_NOTES_DIR: notes, PCS_AI_PROVIDER: "manual" };
   let child: ChildProcess = spawn(process.execPath, ["--experimental-strip-types", "apps/api/src/server.ts"], { env, stdio: "ignore" });
   const api = async (path: string, method = "GET", value?: unknown) => {

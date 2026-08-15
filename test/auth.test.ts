@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 test("admin token can be exchanged for an expiring local session", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "pcs-auth-")); const port = 19900 + Math.floor(Math.random() * 50); const adminToken = "test-admin-token-123456";
+  const directory = mkdtempSync(join(tmpdir(), "pcs-auth-")); const port = 21007; const adminToken = "test-admin-token-123456";
   const child = spawn(process.execPath, ["--experimental-strip-types", "apps/api/src/server.ts"], { env: { ...process.env, PCS_PORT: String(port), PCS_DB: join(directory, "context.sqlite3"), PCS_ADMIN_TOKEN: adminToken }, stdio: "ignore" });
   const url = (path: string) => `http://127.0.0.1:${port}${path}`;
   try {

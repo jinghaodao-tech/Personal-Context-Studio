@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 test("JSON template import validates and stores a draft", async () => {
   const directory = mkdtempSync(join(tmpdir(), "pcs-template-import-"));
-  const port = 19900 + Math.floor(Math.random() * 100);
+  const port = 21019;
   const child = spawn(process.execPath, ["--experimental-strip-types", "apps/api/src/server.ts"], { env: { ...process.env, PCS_PORT: String(port), PCS_DB: join(directory, "context.sqlite3"), PCS_NOTES_DIR: join(directory, "notes") }, stdio: "ignore" });
   mkdirSync(join(directory, "notes"), { recursive: true });
   const url = (path: string) => `http://127.0.0.1:${port}${path}`;

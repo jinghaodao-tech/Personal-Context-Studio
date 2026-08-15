@@ -25,7 +25,7 @@ test("createLocalAiProvider('disabled') is now actually reachable and reports un
 });
 
 test("v1-scope item 5: Markdown recording and Review both keep working while local AI is disabled and stopped", async () => {
-  const port = 20040 + Math.floor(Math.random() * 20);
+  const port = 21020;
   const directory = mkdtempSync(join(tmpdir(), "pcs-ai-disabled-"));
   const notes = join(directory, "notes");
   mkdirSync(notes, { recursive: true });

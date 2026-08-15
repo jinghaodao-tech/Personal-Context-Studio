@@ -9,7 +9,7 @@ import { DatabaseSync } from "node:sqlite";
 test("experience onboarding is idempotent and exposes next actions", async () => {
   const directory = mkdtempSync(join(tmpdir(), "pcs-experience-"));
   const databasePath = join(directory, "experience.sqlite3");
-  const port = 18800 + Math.floor(Math.random() * 100);
+  const port = 21006;
   const child = spawn(process.execPath, ["--experimental-strip-types", "apps/api/src/server.ts"], { env: { ...process.env, PCS_PORT: String(port), PCS_DB: databasePath, PCS_ENCRYPTION_KEY: Buffer.alloc(32, 9).toString("base64") }, stdio: "ignore" });
   const url = (path: string) => `http://127.0.0.1:${port}${path}`;
   const request = async (path: string, init?: RequestInit) => fetch(url(path), { headers: { "content-type": "application/json" }, ...init });

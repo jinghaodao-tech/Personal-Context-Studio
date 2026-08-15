@@ -8,7 +8,7 @@ import { PcsIntegrationClient } from "../packages/integration-sdk/src/index.ts";
 
 test("management and integration credentials stay within their own API boundary", async () => {
   const directory = mkdtempSync(join(tmpdir(), "pcs-access-"));
-  const port = 19550 + Math.floor(Math.random() * 200);
+  const port = 21017;
   const adminToken = "test-admin-token";
   const child = spawn(process.execPath, ["--experimental-strip-types", "apps/api/src/server.ts"], { env: { ...process.env, PCS_PORT: String(port), PCS_DB: join(directory, "context.sqlite3"), PCS_ADMIN_TOKEN: adminToken }, stdio: "ignore" });
   const api = async (path: string, method = "GET", value?: unknown, headers?: Record<string, string>) => {

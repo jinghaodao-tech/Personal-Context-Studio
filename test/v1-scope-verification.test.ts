@@ -29,7 +29,7 @@ function harness(port: number, adminToken?: string) {
 }
 
 test("v1-scope item 2: an unconfirmed value is excluded from a snapshot, by count, with the rest still visible", async () => {
-  const port = 19960 + Math.floor(Math.random() * 20);
+  const port = 21014;
   const { api, ready, cleanup, notes } = harness(port);
   try {
     assert.equal(await ready(), true);
@@ -62,7 +62,7 @@ test("v1-scope item 2: an unconfirmed value is excluded from a snapshot, by coun
 });
 
 test("v1-scope item 3: source, provenance, revision, sensitivity, and valid-period metadata are all present together on one confirmed value", async () => {
-  const port = 19980 + Math.floor(Math.random() * 20);
+  const port = 21015;
   const { api, ready, cleanup, notes } = harness(port);
   try {
     assert.equal(await ready(), true);
@@ -114,7 +114,7 @@ test("v1-scope item 3: source, provenance, revision, sensitivity, and valid-peri
 });
 
 test("v1-scope item 4: a destructive management action is rejected when only integration credentials are presented", async () => {
-  const port = 20000 + Math.floor(Math.random() * 20);
+  const port = 21016;
   const adminToken = "v1-scope-admin-token";
   const { api, ready, cleanup } = harness(port, adminToken);
   const managementHeaders = { "x-pcs-admin-token": adminToken };

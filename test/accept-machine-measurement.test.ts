@@ -1,4 +1,4 @@
-﻿import test from "node:test";
+import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -9,7 +9,7 @@ const required = ["active_minutes", "ai_conversation_minutes", "deep_thinking_mi
 const measurement = { definitionVersion: "dev-pace-v1", sourceTool: "dev-pace", sourceToolVersion: "1.0.0", measuredAt: "2026-08-15T12:00:00.000Z" };
 const values = { active_minutes: 10, ai_conversation_minutes: 20, deep_thinking_minutes: 30, window_switch_count: 4, idle_minutes: 5, away_minutes: 6 };
 test("accept-machine-measurement validates, writes machine provenance atomically, and is idempotent", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "pcs-machine-measurement-")); const port = 20150 + Math.floor(Math.random() * 100);
+  const directory = mkdtempSync(join(tmpdir(), "pcs-machine-measurement-")); const port = 21001;
   const child = spawn(process.execPath, ["--experimental-strip-types", "apps/api/src/server.ts"], { env: { ...process.env, PCS_PORT: String(port), PCS_DB: join(directory, "context.sqlite3"), PCS_NOTES_DIR: join(directory, "notes"), PCS_BACKUP_DIR: join(directory, "backups") }, stdio: "ignore" });
   const api = async (path: string, method = "GET", value?: unknown) => { const response = await fetch(`http://127.0.0.1:${port}${path}`, { method, headers: value === undefined ? undefined : { "content-type": "application/json" }, body: value === undefined ? undefined : JSON.stringify(value) }); return { response, body: await response.json() as any }; };
   let db: DatabaseSync | undefined;

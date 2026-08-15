@@ -32,7 +32,7 @@ test("PCS hybrid document search meets the measured quality floor", async () => 
     ["noise.md", "General notes", "daily notes contain context without the target concepts."],
   ];
   for (const [file, title, body] of documents) writeFileSync(join(notes, "quality", file), `---\ntitle: ${title}\nrecorded_at: 2026-08-01T09:00:00.000Z\n---\n${body}\n`, "utf8");
-  const port = 18900 + Math.floor(Math.random() * 100);
+  const port = 21021;
   const child = spawn(process.execPath, ["--experimental-strip-types", "apps/api/src/server.ts"], { env: { ...process.env, PCS_PORT: String(port), PCS_DB: join(directory, "context.sqlite3"), PCS_NOTES_DIR: notes }, stdio: "ignore" });
   const api = async (path: string, value?: unknown) => { const response = await fetch(`http://127.0.0.1:${port}${path}`, { method: value ? "POST" : "GET", headers: value ? { "content-type": "application/json" } : undefined, body: value ? JSON.stringify(value) : undefined }); return { response, body: await response.json() as any }; };
   try {
