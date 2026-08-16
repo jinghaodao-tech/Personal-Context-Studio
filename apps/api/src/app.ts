@@ -3,7 +3,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { buildOmissionManifest, calculateReconfirmAfter, collectEligibleValues, eligibleForExport, evaluateDisclosure, isSecretLike, newId, validateContextValue, type ContextTemplateField, type Sharing, type Sensitivity } from "../../../packages/domain/src/index.ts";
+import { buildOmissionManifest, calculateReconfirmAfter, collectEligibleValues, eligibleForExport, evaluateDisclosure, isSecretLike, newId, resolveKind, validateContextValue, type ContextTemplateField, type Sharing, type Sensitivity } from "../../../packages/domain/src/index.ts";
 import { CONTEXT_ANALYSIS_SNAPSHOT_VERSION, CONTEXT_ANALYSIS_SNAPSHOT_V3_VERSION, PCS_ANALYSIS_CONTRACT_V3_REVISION } from "../../../packages/integration-contracts/src/index.ts";
 import { excerpt, readMarkdownSnapshot } from "../../../packages/documents/src/index.ts";
 import { createLocalAiProvider } from "../../../packages/ai-core/src/index.ts";
@@ -68,14 +68,28 @@ function storedValue(value: unknown, sensitivity: string) {
 function decodedJson(row: { value_json: string }) { return decryptText(row.value_json, dataEncryptionKey); }
 function decodedValue(row: { value_json: string }) { return JSON.parse(decodedJson(row)); }
 function fields(templateId: string) { return db.prepare("SELECT * FROM context_template_fields WHERE template_id=? ORDER BY display_order").all(templateId).map((field: any) => ({ ...field, required: Boolean(field.required), options: JSON.parse(field.options_json), positiveValueKeys: JSON.parse(field.positive_value_keys_json ?? "[]"), orderedValueKeys: JSON.parse(field.ordered_value_keys_json ?? "[]"), numericMapping: JSON.parse(field.numeric_mapping_json ?? "{}") })); }
-function domainField(field: any): ContextTemplateField { return { fieldKey: field.field_key, label: field.label, description: field.description, valueType: field.value_type, required: Boolean(field.required), displayOrder: field.display_order, options: field.options, minimum: field.minimum_value ?? undefined, maximum: field.maximum_value ?? undefined, unit: field.unit ?? undefined, analysisRole: field.analysis_role ?? undefined, analysisRoleConfirmed: Boolean(field.analysis_role_confirmed), analysisUsage: field.analysis_usage, analysisMergeAllowed: Boolean(field.analysis_merge_allowed), positiveValueKeys: field.positive_value_keys_json ? JSON.parse(field.positive_value_keys_json) : undefined, orderedValueKeys: field.ordered_value_keys_json ? JSON.parse(field.ordered_value_keys_json) : undefined, numericMapping: field.numeric_mapping_json ? JSON.parse(field.numeric_mapping_json) : undefined, reconfirmationMode: field.reconfirmation_mode ?? "none", reconfirmationIntervalDays: field.reconfirmation_interval_days ?? null, sharingDefault: field.sharing_default, sensitivity: field.sensitivity, autoConfirmOnIngestion: Boolean(field.auto_confirm_on_ingestion), reason: field.reason }; }
+function domainField(field: any): ContextTemplateField { return { fieldKey: field.field_key, label: field.label, description: field.description, valueType: field.value_type, required: Boolean(field.required), displayOrder: field.display_order, options: field.options, minimum: field.minimum_value ?? undefined, maximum: field.maximum_value ?? undefined, unit: field.unit ?? undefined, analysisRole: field.analysis_role ?? undefined, analysisRoleConfirmed: Boolean(field.analysis_role_confirmed), analysisUsage: field.analysis_usage, analysisMergeAllowed: Boolean(field.analysis_merge_allowed), positiveValueKeys: field.positive_value_keys_json ? JSON.parse(field.positive_value_keys_json) : undefined, orderedValueKeys: field.ordered_value_keys_json ? JSON.parse(field.ordered_value_keys_json) : undefined, numericMapping: field.numeric_mapping_json ? JSON.parse(field.numeric_mapping_json) : undefined, reconfirmationMode: field.reconfirmation_mode ?? "none", reconfirmationIntervalDays: field.reconfirmation_interval_days ?? null, sharingDefault: field.sharing_default, sensitivity: field.sensitivity, autoConfirmOnIngestion: Boolean(field.auto_confirm_on_ingestion), conceptKey: field.concept_key ?? undefined, defaultKind: field.default_kind ?? undefined, reason: field.reason }; }
+function upsertConcept(conceptKey: string | undefined | null) {
+  if (!conceptKey) return;
+  const timestamp = now();
+  db.prepare("INSERT INTO context_concepts(id,concept_key,label,description,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(concept_key) DO NOTHING").run(newId("concept"), conceptKey, conceptKey, "", timestamp, timestamp);
+}
 function templateDetail(id: string) { const template = db.prepare("SELECT * FROM context_templates WHERE id=?").get(id) as any; return template ? { ...template, fields: fields(id) } : undefined; }
 function audit(action: string, summary: unknown) { db.prepare("INSERT INTO privacy_audit_logs(id,action,summary_json,created_at) VALUES(?,?,?,?)").run(newId("audit"), action, JSON.stringify(summary), now()); }
 function fileHash(path: string) { return createHash("sha256").update(readFileSync(path)).digest("hex"); }
 function validPurpose(id: string) { return Boolean(db.prepare("SELECT 1 FROM context_sharing_purposes WHERE id=? AND is_active=1").get(id)); }
-function provenance(input: { subjectType: "document" | "entry" | "value" | "template" | "export" | "integration_import" | "backup"; subjectId: string; eventType: string; actorType: "user" | "local_ai" | "integration" | "system"; sourceRef?: string | null; sourceContentHash?: string | null; providerId?: string | null; model?: string | null; payload?: unknown; metadata?: Record<string, unknown> }) {
+function provenance(input: { subjectType: "document" | "entry" | "value" | "template" | "export" | "integration_import" | "backup"; subjectId: string; eventType: string; actorType: "user" | "local_ai" | "integration" | "system"; sourceRef?: string | null; sourceContentHash?: string | null; providerId?: string | null; model?: string | null; payload?: unknown; metadata?: Record<string, unknown>; derivedFromIds?: string[]; id?: string }) {
   const payload = input.payload === undefined ? null : createHash("sha256").update(JSON.stringify(input.payload)).digest("hex");
-  db.prepare("INSERT INTO context_provenance(id,subject_type,subject_id,event_type,actor_type,source_ref,source_content_hash,provider_id,model,payload_hash,metadata_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(newId("provenance"), input.subjectType, input.subjectId, input.eventType, input.actorType, input.sourceRef ?? null, input.sourceContentHash ?? null, input.providerId ?? null, input.model ?? null, payload, JSON.stringify(input.metadata ?? {}), now());
+  const id = input.id ?? newId("provenance");
+  db.prepare("INSERT INTO context_provenance(id,subject_type,subject_id,event_type,actor_type,source_ref,source_content_hash,provider_id,model,payload_hash,metadata_json,derived_from_ids_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)").run(id, input.subjectType, input.subjectId, input.eventType, input.actorType, input.sourceRef ?? null, input.sourceContentHash ?? null, input.providerId ?? null, input.model ?? null, payload, JSON.stringify(input.metadata ?? {}), JSON.stringify(input.derivedFromIds ?? []), now());
+  return { id };
+}
+/** Most recent provenance event id for a subject (optionally narrowed by source_content_hash), or null. Used to wire ADR-020 derivation links without a new query layer. */
+function latestProvenanceId(subjectType: string, subjectId: string, sourceContentHash?: string) {
+  const row = sourceContentHash
+    ? db.prepare("SELECT id FROM context_provenance WHERE subject_type=? AND subject_id=? AND source_content_hash=? ORDER BY created_at DESC LIMIT 1").get(subjectType, subjectId, sourceContentHash) as { id: string } | undefined
+    : db.prepare("SELECT id FROM context_provenance WHERE subject_type=? AND subject_id=? ORDER BY created_at DESC LIMIT 1").get(subjectType, subjectId) as { id: string } | undefined;
+  return row?.id ?? null;
 }
 
 type RevisionChangeType = "initial" | "correction" | "state_change" | "exception" | "reaffirmation" | "retraction" | "remeasurement";
@@ -93,7 +107,7 @@ function defaultReconfirmAfter(entryId: string, fieldKey: string, timestamp = no
   return field?.reconfirmation_mode === "default" && field.reconfirmation_interval_days ? calculateReconfirmAfter(timestamp, field.reconfirmation_interval_days) : null;
 }
 
-function addRevision(input: { entryId: string; fieldKey: string; value?: unknown; changeType?: string; reason?: string; validFrom?: unknown; validTo?: unknown; sharing?: unknown; sensitivity?: unknown; reconfirmAfter?: unknown }) {
+function addRevision(input: { entryId: string; fieldKey: string; value?: unknown; changeType?: string; reason?: string; validFrom?: unknown; validTo?: unknown; sharing?: unknown; sensitivity?: unknown; reconfirmAfter?: unknown; kind?: unknown }) {
   const current = valueRow(input.entryId, input.fieldKey);
   if (!current) throw new Error("context_value_not_found");
   const previousValue = decodedValue(current);
@@ -101,6 +115,7 @@ function addRevision(input: { entryId: string; fieldKey: string; value?: unknown
   const definition = fields(current.template_id).find((field: any) => field.field_key === input.fieldKey);
   if (!definition) throw new Error("context_field_not_found");
   validateContextValue(domainField(definition), value);
+  const kind = input.kind !== undefined ? resolveKind(input.kind, definition.default_kind) : (current.kind ?? resolveKind(undefined, definition.default_kind));
   const changeType = (input.changeType || (current.user_confirmed ? "correction" : "initial")) as RevisionChangeType;
   if (!revisionChangeTypes.has(changeType)) throw new Error("revision_change_type_invalid");
   const reason = text(input.reason) || (changeType === "initial" ? "Initial confirmed value" : "");
@@ -114,11 +129,14 @@ function addRevision(input: { entryId: string; fieldKey: string; value?: unknown
   const reconfirmAfter = input.reconfirmAfter === undefined ? (changeType === "reaffirmation" ? defaultReconfirmAfter(input.entryId, input.fieldKey, timestamp) : (current.reconfirm_after ?? defaultReconfirmAfter(input.entryId, input.fieldKey, timestamp))) : input.reconfirmAfter === null || input.reconfirmAfter === "" ? null : validTimestamp(input.reconfirmAfter) ? input.reconfirmAfter : (() => { throw new Error("reconfirm_after_invalid"); })();
   const stored = storedValue(value, sensitivity);
   const revisionId = newId("revision");
+  // Capture the value's own most recent provenance event BEFORE inserting the new one (ADR-020),
+  // so the new event can chain to it without accidentally finding itself.
+  const parentProvenanceId = latestProvenanceId("value", current.id);
   if (changeType === "state_change" && validFrom && current.current_revision_id) db.prepare("UPDATE context_value_revisions SET valid_to=? WHERE id=? AND valid_to IS NULL").run(validFrom, current.current_revision_id);
-  db.prepare("INSERT INTO context_value_revisions(id,value_id,entry_id,field_key,value_json,encrypted,change_type,reason,valid_from,valid_to,sharing,sensitivity,supersedes_revision_id,source_id,source_content_hash,user_confirmed,confirmed_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(revisionId, current.id, input.entryId, input.fieldKey, stored.json, stored.encrypted, changeType, reason, validFrom, validTo, sharing, sensitivity, current.current_revision_id ?? null, current.source_id ?? null, revisionSourceHash(input.entryId), 1, timestamp, timestamp);
-  db.prepare("UPDATE context_values SET value_json=?,encrypted=?,user_confirmed=1,reviewed_at=CASE WHEN user_confirmed=0 THEN ? ELSE reviewed_at END,last_reconfirmed_at=CASE WHEN user_confirmed=0 OR ?='reaffirmation' THEN ? ELSE last_reconfirmed_at END,reconfirm_after=?,sharing=?,sensitivity=?,current_revision_id=?,lifecycle_state=?,updated_at=? WHERE id=?").run(stored.json, stored.encrypted, timestamp, changeType, timestamp, reconfirmAfter, sharing, sensitivity, revisionId, changeType === "retraction" ? "retracted" : "active", timestamp, current.id);
+  db.prepare("INSERT INTO context_value_revisions(id,value_id,entry_id,field_key,value_json,encrypted,change_type,reason,valid_from,valid_to,sharing,sensitivity,supersedes_revision_id,source_id,source_content_hash,user_confirmed,confirmed_at,created_at,kind) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(revisionId, current.id, input.entryId, input.fieldKey, stored.json, stored.encrypted, changeType, reason, validFrom, validTo, sharing, sensitivity, current.current_revision_id ?? null, current.source_id ?? null, revisionSourceHash(input.entryId), 1, timestamp, timestamp, kind);
+  db.prepare("UPDATE context_values SET value_json=?,encrypted=?,user_confirmed=1,reviewed_at=CASE WHEN user_confirmed=0 THEN ? ELSE reviewed_at END,last_reconfirmed_at=CASE WHEN user_confirmed=0 OR ?='reaffirmation' THEN ? ELSE last_reconfirmed_at END,reconfirm_after=?,sharing=?,sensitivity=?,current_revision_id=?,lifecycle_state=?,kind=?,updated_at=? WHERE id=?").run(stored.json, stored.encrypted, timestamp, changeType, timestamp, reconfirmAfter, sharing, sensitivity, revisionId, changeType === "retraction" ? "retracted" : "active", kind, timestamp, current.id);
   audit("revise_context_value", { entryId: input.entryId, fieldKey: input.fieldKey, revisionId, changeType, lifecycleState: changeType === "retraction" ? "retracted" : "active" });
-  provenance({ subjectType: "value", subjectId: current.id, eventType: changeType === "initial" ? "confirmed" : "revised", actorType: "user", sourceRef: current.source_id, sourceContentHash: revisionSourceHash(input.entryId), metadata: { entryId: input.entryId, fieldKey: input.fieldKey, changeType } });
+  provenance({ subjectType: "value", subjectId: current.id, eventType: changeType === "initial" ? "confirmed" : "revised", actorType: "user", sourceRef: current.source_id, sourceContentHash: revisionSourceHash(input.entryId), metadata: { entryId: input.entryId, fieldKey: input.fieldKey, changeType }, derivedFromIds: parentProvenanceId ? [parentProvenanceId] : [] });
   return { revisionId, changeType, lifecycleState: changeType === "retraction" ? "retracted" : "active" };
 }
 
@@ -126,8 +144,47 @@ function createInitialRevision(valueId: string, reason = "Initial confirmed valu
   const row = db.prepare("SELECT v.*,e.status FROM context_values v JOIN context_entries e ON e.id=v.entry_id WHERE v.id=?").get(valueId) as any;
   if (!row || !row.user_confirmed || row.current_revision_id || row.status === "archived") return;
   const revisionId = newId("revision"); const timestamp = now();
-  db.prepare("INSERT INTO context_value_revisions(id,value_id,entry_id,field_key,value_json,encrypted,change_type,reason,valid_from,valid_to,sharing,sensitivity,supersedes_revision_id,source_id,source_content_hash,user_confirmed,confirmed_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(revisionId, row.id, row.entry_id, row.field_key, row.value_json, row.encrypted ?? 0, "initial", reason, row.recorded_at, null, row.sharing, row.sensitivity, null, row.source_id ?? null, revisionSourceHash(row.entry_id), 1, timestamp, timestamp);
+  db.prepare("INSERT INTO context_value_revisions(id,value_id,entry_id,field_key,value_json,encrypted,change_type,reason,valid_from,valid_to,sharing,sensitivity,supersedes_revision_id,source_id,source_content_hash,user_confirmed,confirmed_at,created_at,kind) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(revisionId, row.id, row.entry_id, row.field_key, row.value_json, row.encrypted ?? 0, "initial", reason, row.recorded_at, null, row.sharing, row.sensitivity, null, row.source_id ?? null, revisionSourceHash(row.entry_id), 1, timestamp, timestamp, row.kind ?? null);
   db.prepare("UPDATE context_values SET current_revision_id=?,lifecycle_state=COALESCE(lifecycle_state,'active') WHERE id=?").run(revisionId, row.id);
+}
+
+/**
+ * ADR-019: bitemporal as-of resolution over context_value_revisions, with no
+ * new schema. `knownAsOf` is the transaction-time cut (ignore anything PCS
+ * recorded after this instant); `validAt` is the valid-time instant being
+ * asked about. Revisions with no explicit valid_from/valid_to (most of them,
+ * since only the state_change flow sets those today) fall back to treating
+ * "recorded" and "became true" as the same instant -- an honest default, not
+ * a placeholder: PCS genuinely does not know a finer-grained valid time for
+ * those rows.
+ */
+function resolveValueAsOf(entryId: string, fieldKey: string, validAt: string, knownAsOf?: string) {
+  const cutoff = knownAsOf ?? now();
+  const revisions = db.prepare("SELECT id,value_json,encrypted,change_type,reason,valid_from,kind,created_at FROM context_value_revisions WHERE entry_id=? AND field_key=? AND created_at<=? ORDER BY created_at ASC").all(entryId, fieldKey, cutoff) as any[];
+  if (!revisions.length) return { found: false as const };
+  // Deliberately never read the stored valid_to column here: addRevision's state_change flow
+  // closes the *previous* revision's valid_to via an in-place UPDATE when a new revision arrives,
+  // which is a mutation with no transaction-time record of its own. If that closing revision falls
+  // outside the knownAsOf cutoff (excluded from `revisions` above), the earlier row's stored valid_to
+  // would still reflect it -- future knowledge leaking into a supposedly historical view. Deriving
+  // effectiveTo purely from "the next revision within this already-filtered set" avoids that leak by
+  // construction, at the cost of ignoring an explicit valid_to set independently on a tail revision
+  // with no recorded successor (not a pattern any current caller uses).
+  const effective = revisions.map((revision, index) => {
+    const effectiveFrom = revision.valid_from ?? revision.created_at;
+    const next = revisions[index + 1];
+    const effectiveTo = next ? (next.valid_from ?? next.created_at) : null;
+    return { ...revision, effectiveFrom, effectiveTo };
+  });
+  const at = Date.parse(validAt);
+  const match = [...effective].reverse().find((revision) => {
+    const from = Date.parse(revision.effectiveFrom);
+    const to = revision.effectiveTo ? Date.parse(revision.effectiveTo) : Number.POSITIVE_INFINITY;
+    return at >= from && at < to;
+  });
+  if (!match) return { found: false as const };
+  if (match.change_type === "retraction") return { found: true as const, retracted: true as const, revisionId: match.id, changeType: match.change_type, recordedAt: match.created_at, reason: match.reason };
+  return { found: true as const, retracted: false as const, revisionId: match.id, changeType: match.change_type, value: decodedValue(match), kind: match.kind ?? null, recordedAt: match.created_at, reason: match.reason };
 }
 
 for (const row of db.prepare("SELECT id FROM context_values WHERE user_confirmed=1 AND current_revision_id IS NULL").all() as Array<{ id: string }>) createInitialRevision(row.id, "Initial value migrated into revision history");
@@ -283,13 +340,13 @@ function candidateStale(entryId: string) {
   return Boolean(candidate && (candidate.archived_at || candidate.source_content_hash !== candidate.content_hash));
 }
 
-function recordReview(entryId: string, fieldKey: string, decision: "accepted" | "edited_and_accepted" | "rejected" | "unknown", reason: string, value?: unknown, reconfirmAfter?: unknown) {
+function recordReview(entryId: string, fieldKey: string, decision: "accepted" | "edited_and_accepted" | "rejected" | "unknown", reason: string, value?: unknown, reconfirmAfter?: unknown, kind?: unknown) {
   const current = valueRow(entryId, fieldKey);
   if (!current || current.user_confirmed || current.reviewed_at) throw new Error("review_value_not_pending");
   if (candidateStale(entryId)) throw new Error("extraction_stale");
   const timestamp = now();
   if (decision === "accepted" || decision === "edited_and_accepted") {
-    const revision = addRevision({ entryId, fieldKey, value: value === undefined ? decodedValue(current) : value, changeType: "initial", reason, reconfirmAfter });
+    const revision = addRevision({ entryId, fieldKey, value: value === undefined ? decodedValue(current) : value, changeType: "initial", reason, reconfirmAfter, kind });
     db.prepare("INSERT INTO context_value_reviews(id,value_id,entry_id,field_key,decision,reason,reviewed_at) VALUES(?,?,?,?,?,?,?)").run(newId("review"), current.id, entryId, fieldKey, decision, reason, timestamp);
     provenance({ subjectType: "value", subjectId: current.id, eventType: "reviewed", actorType: "user", sourceRef: current.source_id, sourceContentHash: revisionSourceHash(entryId), metadata: { entryId, fieldKey, decision } });
     audit("review_context_value", { entryId, fieldKey, decision });
@@ -332,10 +389,10 @@ export const server = createServer(async (request, response) => {
      if (await handleGovernanceRoute(request, response, url, parts, { db, send, body, text, now, newId, destinationHost, validPurpose, audit })) return;
      if (await handleRuntimeRoute(request, response, url, { db, send, body, text, activeExternalAiConsent, destinationHost, detectOllama, detectOpenAiCompatible, localAiProvider, localAiRuntime, analysisSnapshot: analysisSnapshotV2, analysisSnapshotV3, integrationAuthorization })) return;
      if (await handleProfileRoute(request, response, url, parts, { db, send, body, text, now, newId, audit, validPurpose })) return;
-     if (await handleEntryRoute(request, response, url, parts, { db, send, body, text, now, newId, audit, provenance, templateDetail, domainField, valueRow, decodedJson, storedValue, addRevision, recordReview, detectConflicts, createInitialRevision, validateContextValue, validTimestamp, calculateReconfirmAfter, isSecretLike, allowedSharing, allowedSensitivity })) return;
+     if (await handleEntryRoute(request, response, url, parts, { db, send, body, text, now, newId, audit, provenance, templateDetail, domainField, valueRow, decodedJson, storedValue, addRevision, recordReview, detectConflicts, createInitialRevision, validateContextValue, validTimestamp, calculateReconfirmAfter, isSecretLike, allowedSharing, allowedSensitivity, resolveKind, resolveValueAsOf, latestProvenanceId })) return;
      if (await handleLifecycleRoute(request, response, url, parts, { db, send, body, text, now, audit, provenance, decodedJson, validPurpose, valueRow, addRevision, newId, revisionSourceHash, exportPreview, isSecretLike })) return;
-     if (await handleContentRoute(request, response, url, parts, { db, send, body, text, now, newId, audit, provenance, notesRoot, readMarkdownSnapshot, excerpt, ftsTerms, upsertDocument, templateDetail, integrationPermissions, integrationAuthorized, hashIntegrationToken, randomToken: () => randomBytes(32).toString("base64url"), decodedJson, destinationHost, activeExternalAiConsent })) return;
-     if (await handleTemplateRoute(request, response, url, parts, { db, send, body, text, now, newId, audit, provenance, templateDetail, integrationAuthorized, localAiProvider })) return;
+     if (await handleContentRoute(request, response, url, parts, { db, send, body, text, now, newId, audit, provenance, notesRoot, readMarkdownSnapshot, excerpt, ftsTerms, upsertDocument, templateDetail, integrationPermissions, integrationAuthorized, hashIntegrationToken, randomToken: () => randomBytes(32).toString("base64url"), decodedJson, destinationHost, activeExternalAiConsent, resolveKind, latestProvenanceId })) return;
+     if (await handleTemplateRoute(request, response, url, parts, { db, send, body, text, now, newId, audit, provenance, templateDetail, integrationAuthorized, localAiProvider, upsertConcept })) return;
     if (request.method === "GET" && url.pathname === "/v1/dashboard/overview") return send(response, 200, readDashboardOverview(db));
     if (request.method === "GET" && url.pathname === "/v1/dashboard/values") return send(response, 200, { items: readDashboardValues(db, decodedJson) });
     if (request.method === "GET" && url.pathname === "/v1/watcher/status") { try { return send(response, 200, JSON.parse(readFileSync(watcherStatePath, "utf8"))); } catch { return send(response, 404, { error: "watcher_status_unavailable" }); } }

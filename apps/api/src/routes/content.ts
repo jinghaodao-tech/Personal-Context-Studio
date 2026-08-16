@@ -13,7 +13,7 @@ export type ContentRouteContext = {
   now: () => string;
   newId: (prefix: string) => string;
   audit: (action: string, summary: unknown) => void;
-  provenance: (input: any) => void;
+  provenance: (input: any) => { id: string };
   notesRoot: string;
   readMarkdownSnapshot: (notesRoot: string, filePath: string) => { absolutePath: string; relativePath: string; contentHash: string; content: string };
   excerpt: (content: string, maxCharacters: number) => string;
@@ -27,6 +27,8 @@ export type ContentRouteContext = {
   templateDetail: (id: string) => any;
   destinationHost: (value: string) => string;
   activeExternalAiConsent: (scope: "document" | "field", providerId: string, host: string, documentId?: string, templateId?: string, fieldKey?: string) => boolean;
+  resolveKind: (explicit: unknown, fieldDefaultKind: string | null | undefined) => string | null;
+  latestProvenanceId: (subjectType: string, subjectId: string, sourceContentHash?: string) => string | null;
 };
 
 export async function handleContentRoute(
@@ -36,7 +38,7 @@ export async function handleContentRoute(
   parts: string[],
   context: ContentRouteContext,
 ): Promise<boolean> {
-  const { db, send, body, text, now, newId, audit, provenance, notesRoot, readMarkdownSnapshot, excerpt, ftsTerms, upsertDocument, integrationPermissions, integrationAuthorized, hashIntegrationToken, randomToken, decodedJson, templateDetail, destinationHost, activeExternalAiConsent } = context;
+  const { db, send, body, text, now, newId, audit, provenance, notesRoot, readMarkdownSnapshot, excerpt, ftsTerms, upsertDocument, integrationPermissions, integrationAuthorized, hashIntegrationToken, randomToken, decodedJson, templateDetail, destinationHost, activeExternalAiConsent, resolveKind, latestProvenanceId } = context;
 
   if (request.method === "GET" && url.pathname === "/v1/integration-clients") {
     const items = db.prepare("SELECT id,name,permissions_json,is_active,created_at,updated_at FROM integration_clients ORDER BY created_at DESC").all() as any[];
@@ -148,7 +150,7 @@ export async function handleContentRoute(
     const templateId = text(input.templateId) || (db.prepare("SELECT id FROM context_templates WHERE name='dev-pace-daily-v1' AND status='active' ORDER BY version DESC LIMIT 1").get() as { id?: string } | undefined)?.id;
     const template = templateId ? db.prepare("SELECT id,version FROM context_templates WHERE id=? AND status='active'").get(templateId) as { id: string; version: number } | undefined : undefined;
     if (!template) { send(response, 404, { error: "machine_measurement_template_not_found" }); return true; }
-    const fields = db.prepare("SELECT field_key,value_type,sharing_default,sensitivity FROM context_template_fields WHERE template_id=? AND analysis_role_confirmed=1 ORDER BY display_order").all(template.id) as Array<{ field_key: string; value_type: string; sharing_default: string; sensitivity: string }>;
+    const fields = db.prepare("SELECT field_key,value_type,sharing_default,sensitivity,default_kind FROM context_template_fields WHERE template_id=? AND analysis_role_confirmed=1 ORDER BY display_order").all(template.id) as Array<{ field_key: string; value_type: string; sharing_default: string; sensitivity: string; default_kind: string | null }>;
     const required = ["active_minutes", "ai_conversation_minutes", "deep_thinking_minutes", "window_switch_count", "idle_minutes", "away_minutes"];
     if (!required.every((key) => fields.some((field) => field.field_key === key))) { send(response, 422, { error: "machine_measurement_template_fields_invalid" }); return true; }
     const values = fields.filter((field) => required.includes(field.field_key)).map((field) => ({ ...field, value: payload[field.field_key] }));
@@ -163,15 +165,17 @@ export async function handleContentRoute(
         const revisionId = newId("revision");
         const json = JSON.stringify(field.value);
         const measurementJson = JSON.stringify(measurement);
-        db.prepare("INSERT INTO context_values(id,entry_id,field_key,value_json,encrypted,source,source_id,user_confirmed,confirmation_mode,measurement_json,sharing,sensitivity,lifecycle_state,recorded_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(valueId, entryId, field.field_key, json, 0, "integration_import", imported.id, 0, "machine_measured", measurementJson, field.sharing_default, field.sensitivity, "active", `${date}T00:00:00.000Z`, timestamp);
-        db.prepare("INSERT INTO context_value_revisions(id,value_id,entry_id,field_key,value_json,encrypted,change_type,reason,sharing,sensitivity,source_id,source_content_hash,user_confirmed,confirmation_mode,measurement_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(revisionId, valueId, entryId, field.field_key, json, 0, "initial", "Initial machine measurement import", field.sharing_default, field.sensitivity, imported.id, null, 0, "machine_measured", measurementJson, timestamp);
+        const kind = resolveKind((measurement as any).kind, field.default_kind);
+        db.prepare("INSERT INTO context_values(id,entry_id,field_key,value_json,encrypted,source,source_id,user_confirmed,confirmation_mode,measurement_json,sharing,sensitivity,lifecycle_state,recorded_at,updated_at,kind) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(valueId, entryId, field.field_key, json, 0, "integration_import", imported.id, 0, "machine_measured", measurementJson, field.sharing_default, field.sensitivity, "active", `${date}T00:00:00.000Z`, timestamp, kind);
+        db.prepare("INSERT INTO context_value_revisions(id,value_id,entry_id,field_key,value_json,encrypted,change_type,reason,sharing,sensitivity,source_id,source_content_hash,user_confirmed,confirmation_mode,measurement_json,created_at,kind) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(revisionId, valueId, entryId, field.field_key, json, 0, "initial", "Initial machine measurement import", field.sharing_default, field.sensitivity, imported.id, null, 0, "machine_measured", measurementJson, timestamp, kind);
         db.prepare("UPDATE context_values SET current_revision_id=? WHERE id=?").run(revisionId, valueId);
       }
       db.prepare("UPDATE integration_import_records SET decision='accepted',target_template_id=?,target_field_key=NULL,updated_at=? WHERE id=?").run(template.id, timestamp, imported.id);
       db.exec("COMMIT");
     } catch (error) { db.exec("ROLLBACK"); throw error; }
     audit("accept_machine_measurement_import", { importId: imported.id, entryId, templateId: template.id, fieldCount: values.length });
-    provenance({ subjectType: "integration_import", subjectId: imported.id, eventType: "accepted_as_machine_measurement", actorType: "user", sourceRef: imported.source_reference_id ?? imported.source_import_id, metadata: { entryId, templateId: template.id, fieldCount: values.length } });
+    const receivedProvenanceId = latestProvenanceId("integration_import", imported.id);
+    provenance({ subjectType: "integration_import", subjectId: imported.id, eventType: "accepted_as_machine_measurement", actorType: "user", sourceRef: imported.source_reference_id ?? imported.source_import_id, metadata: { entryId, templateId: template.id, fieldCount: values.length }, derivedFromIds: receivedProvenanceId ? [receivedProvenanceId] : [] });
     send(response, 201, { accepted: true, importId: imported.id, entryId, templateId: template.id, fieldCount: values.length }); return true;
   }
   if (request.method === "POST" && parts.join("/").match(/^v1\/integration-imports\/[^/]+\/decision$/)) { const input = await body(request); const decision = text(input.decision); if (!["accepted", "edited_and_accepted", "held", "rejected"].includes(decision)) { send(response, 400, { error: "integration_import_decision_invalid" }); return true; } const result = db.prepare("UPDATE integration_import_records SET decision=?,target_template_id=?,target_field_key=?,updated_at=? WHERE id=?").run(decision, text(input.templateId) || null, text(input.fieldKey) || null, now(), parts[2]); audit("decide_integration_import", { importId: parts[2], decision }); send(response, result.changes ? 200 : 404, result.changes ? { decision } : { error: "integration_import_not_found" }); return true; }

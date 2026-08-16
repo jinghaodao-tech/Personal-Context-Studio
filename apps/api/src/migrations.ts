@@ -234,6 +234,23 @@ export function applyMigrations(db: DatabaseSync, schemaSql: string) {
       db.exec("CREATE TABLE context_provenance (id TEXT PRIMARY KEY, subject_type TEXT NOT NULL CHECK(subject_type IN('document','entry','value','template','template_field','export','integration_import','backup')), subject_id TEXT NOT NULL, event_type TEXT NOT NULL, actor_type TEXT NOT NULL CHECK(actor_type IN('user','local_ai','integration','system')), source_ref TEXT, source_content_hash TEXT, provider_id TEXT, model TEXT, payload_hash TEXT, metadata_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL) STRICT");
       db.exec("INSERT INTO context_provenance(id,subject_type,subject_id,event_type,actor_type,source_ref,source_content_hash,provider_id,model,payload_hash,metadata_json,created_at) SELECT id,subject_type,subject_id,event_type,actor_type,source_ref,source_content_hash,provider_id,model,payload_hash,metadata_json,created_at FROM context_provenance_legacy");
       db.exec("DROP TABLE context_provenance_legacy; CREATE INDEX IF NOT EXISTS context_provenance_subject_idx ON context_provenance(subject_type,subject_id,created_at DESC); CREATE INDEX IF NOT EXISTS context_provenance_source_idx ON context_provenance(source_ref,created_at DESC); PRAGMA foreign_keys=ON;");
+    } },
+    { version: "025_concept_registry_and_assertion_kind", apply: () => {
+      const kindEnum = "'observation','measurement','preference','decision','plan','external_claim','inference'";
+      db.exec(`CREATE TABLE IF NOT EXISTS context_concepts (id TEXT PRIMARY KEY, concept_key TEXT NOT NULL UNIQUE, label TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', unit TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL) STRICT;`);
+      const addColumn = (table: string, column: string, definition: string) => {
+        const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+        if (!columns.some((item) => item.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+      };
+      addColumn("context_template_fields", "concept_key", "TEXT");
+      addColumn("context_template_fields", "default_kind", `TEXT CHECK(default_kind IS NULL OR default_kind IN(${kindEnum}))`);
+      addColumn("context_values", "kind", `TEXT CHECK(kind IS NULL OR kind IN(${kindEnum}))`);
+      addColumn("context_value_revisions", "kind", `TEXT CHECK(kind IS NULL OR kind IN(${kindEnum}))`);
+      db.exec("CREATE INDEX IF NOT EXISTS context_template_fields_concept_idx ON context_template_fields(concept_key); CREATE INDEX IF NOT EXISTS context_values_kind_idx ON context_values(kind);");
+    } },
+    { version: "026_provenance_derivation_links", apply: () => {
+      const columns = db.prepare("PRAGMA table_info(context_provenance)").all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === "derived_from_ids_json")) db.exec("ALTER TABLE context_provenance ADD COLUMN derived_from_ids_json TEXT NOT NULL DEFAULT '[]'");
     } },  ];
   const applied = new Set((db.prepare("SELECT version FROM schema_migrations").all() as Array<{ version: string }>).map((row) => row.version));
   for (const migration of migrations) {

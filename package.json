@@ -17,7 +17,7 @@
         "ops:watch": "node scripts/ops-watch.mjs",
         "check:packaging": "node scripts/check-packaging.mjs",
         "test": "node --experimental-strip-types --test test/*.test.ts",
-        "test:e2e": "node --experimental-strip-types --test test/browser-e2e.test.ts",
+        "test:e2e": "node --experimental-strip-types --test test/e2e/browser-e2e.test.ts",
         "typecheck": "tsc --project tsconfig.json",
         "check:encoding": "node scripts/check-encoding.mjs",
         "check:migrations": "node --experimental-strip-types scripts/check-migrations.mjs",
