@@ -25,6 +25,14 @@ npm.cmd run dev
 
 ![PCS dashboard home](docs/screenshots/dashboard-home.jpg)
 
+### Review and consent flow
+
+![PCS Review and external-AI consent](docs/screenshots/pcs-review-and-consent.gif)
+
+The recording shows the live Review classification (including sensitive and
+conflicting values) and the explicit provider/host consent dialog before an
+external-AI disclosure.
+
 ## Portfolio Summary
 
 Personal Context Studio is the local-first governance layer for personal context. It keeps Markdown as the human-readable source of truth, turns notes into user-confirmed structured values, and controls revision history, applicability, purpose-limited sharing, privacy filtering, backups, and safe deletion before any external tool receives a snapshot. MeTheory and other clients receive only the scoped, validated Integration API contract; they do not access the PCS database directly.
