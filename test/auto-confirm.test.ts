@@ -36,6 +36,13 @@ test("layered detector covers adversarial metadata and value PII", () => {
   assert.equal(autoConfirmClassification("q", "端末の電力", "", "42 watts").flagged, false);
 });
 
+test("semantic layer catches paraphrases without keyword matches", () => {
+  assert.equal(autoConfirmClassification("irritation_level", "苛立ちレベル").layers.keyword, false);
+  assert.equal(autoConfirmClassification("irritation_level", "苛立ちレベル").layers.semantic, true);
+  assert.equal(autoConfirmClassification("household_margin", "家計の余裕").layers.keyword, false);
+  assert.equal(autoConfirmClassification("household_margin", "家計の余裕").layers.semantic, true);
+});
+
 test("autoConfirmAllowed: disabled auto-confirm is always allowed regardless of sensitivity or flags", () => {
   assert.deepEqual(autoConfirmAllowed({ enabled: false, sensitivity: "highly_sensitive", detectorFlagged: true, elevatedConsent: false }), { ok: true });
 });

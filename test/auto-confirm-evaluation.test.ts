@@ -10,6 +10,8 @@ type Case = { key: string; label: string; description?: string; value?: string; 
 export const AUTO_CONFIRM_EVALUATION_SET: Case[] = [
   { key: "怒りの強さ", label: "今日の感情", sensitive: true },
   { key: "annual_income", label: "暮らしの余裕", sensitive: true },
+  { key: "irritation_level", label: "苛立ちレベル", sensitive: true },
+  { key: "household_margin", label: "家計の余裕", sensitive: true },
   { key: "contact", label: "連絡先", value: "user@example.com", sensitive: true },
   { key: "postal", label: "配送先", value: "〒100-0001", sensitive: true },
   { key: "sleep_quality", label: "昨夜の休息", sensitive: true },

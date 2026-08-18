@@ -113,7 +113,9 @@ of ADR-015.
 - `test/auto-confirm-evaluation.test.ts` and `tools/evaluate-auto-confirm.ts`
   provide a versioned labeled hold-out set and report per-layer plus combined
   OR-gate precision/recall. The current 10-case set reports combined precision
-  1.00 and recall 1.00; this is a regression floor, not a population accuracy
+  1.00 and recall 1.00 across 12 labeled cases; the semantic layer now has
+  held-out paraphrase examples (precision 1.00, recall 0.29) rather than
+  relying only on keyword overlap. This is a regression floor, not a population accuracy
   claim, and must grow with reviewed production examples.
 
 ## Alternatives Considered
