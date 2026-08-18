@@ -21,6 +21,7 @@
         "typecheck": "tsc --project tsconfig.json",
         "check:encoding": "node scripts/check-encoding.mjs",
         "check:migrations": "node --experimental-strip-types scripts/check-migrations.mjs",
+        "evaluate:auto-confirm": "node --experimental-strip-types tools/evaluate-auto-confirm.ts",
         "verify": "npm run build:contracts && npm run typecheck && npm run test && npm run check:migrations && npm run check:encoding",
         "verify:ci": "npm ci && npm run verify",
         "build:contracts": "tsc packages/integration-contracts/src/index.ts --target ES2022 --module NodeNext --moduleResolution NodeNext --skipLibCheck --declaration --outDir packages/integration-contracts/dist"

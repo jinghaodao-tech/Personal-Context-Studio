@@ -110,6 +110,11 @@ of ADR-015.
 - Tests cover adversarial metadata, value PII, false-positive energy wording,
   migration idempotence, and the existing review flow. No LLM or external
   service is used.
+- `test/auto-confirm-evaluation.test.ts` and `tools/evaluate-auto-confirm.ts`
+  provide a versioned labeled hold-out set and report per-layer plus combined
+  OR-gate precision/recall. The current 10-case set reports combined precision
+  1.00 and recall 1.00; this is a regression floor, not a population accuracy
+  claim, and must grow with reviewed production examples.
 
 ## Alternatives Considered
 
@@ -151,15 +156,9 @@ of ADR-015.
   pattern detector rather than a bundled ONNX model, keeping the core install
   dependency-free; a future ONNX model can replace that layer behind the same
   interface after a measured evaluation.
-- Before any of the three new layers ship, a labeled evaluation set (not the
-  current circular self-matching tests) is required: realistic field
-  name/label/description examples spanning the legal categories, this
-  project's own extensions, and deliberately adversarial/oblique phrasings
-  (the "怒り"/"収入"/"性的指向"-shaped gaps found in this review), covering
-  both true positives and plausible false positives (e.g. "energy" meaning
-  device power draw, not mood). Precision/recall should be measured per layer
-  and for the combined OR-gate before this replaces the existing detector,
-  not assumed from design intent alone.
+- The labeled evaluation set is now present and runs in CI. It is intentionally
+  small and must be expanded with reviewed examples before treating the metrics
+  as representative of production traffic.
 - The value-content PII layer (`pii-ja-ner-onnx`) has a different scope than
   the other two (it reads values, not field metadata) and can be adopted
   independently of the keyword/embedding rework — it does not require this
