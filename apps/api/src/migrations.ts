@@ -251,6 +251,14 @@ export function applyMigrations(db: DatabaseSync, schemaSql: string) {
     { version: "026_provenance_derivation_links", apply: () => {
       const columns = db.prepare("PRAGMA table_info(context_provenance)").all() as Array<{ name: string }>;
       if (!columns.some((column) => column.name === "derived_from_ids_json")) db.exec("ALTER TABLE context_provenance ADD COLUMN derived_from_ids_json TEXT NOT NULL DEFAULT '[]'");
+    } },
+    { version: "027_retire_review_classification_reasons", apply: () => {
+      const columns = db.prepare("PRAGMA table_info(pcs_review_classifications)").all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === "reason_json")) return;
+      db.exec("PRAGMA foreign_keys=OFF; ALTER TABLE pcs_review_classifications RENAME TO pcs_review_classifications_legacy;");
+      db.exec("CREATE TABLE pcs_review_classifications (value_id TEXT PRIMARY KEY REFERENCES context_values(id) ON DELETE CASCADE, classification TEXT NOT NULL CHECK(classification IN('high_confidence','needs_review','sensitive_or_conflict')), confidence REAL CHECK(confidence IS NULL OR (confidence>=0 AND confidence<=1)), updated_at TEXT NOT NULL) STRICT;");
+      db.exec("INSERT INTO pcs_review_classifications(value_id,classification,confidence,updated_at) SELECT value_id,classification,confidence,updated_at FROM pcs_review_classifications_legacy;");
+      db.exec("DROP TABLE pcs_review_classifications_legacy; CREATE INDEX IF NOT EXISTS pcs_review_classification_idx ON pcs_review_classifications(classification,updated_at DESC); PRAGMA foreign_keys=ON;");
     } },  ];
   const applied = new Set((db.prepare("SELECT version FROM schema_migrations").all() as Array<{ version: string }>).map((row) => row.version));
   for (const migration of migrations) {
@@ -266,4 +274,3 @@ export function applyMigrations(db: DatabaseSync, schemaSql: string) {
     }
   }
 }
-

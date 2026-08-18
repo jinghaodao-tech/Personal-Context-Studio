@@ -5,7 +5,7 @@ import { autoConfirmClassification, autoConfirmAllowed } from "../apps/api/src/a
 test("detector does not flag an ordinary task field", () => {
   const result = autoConfirmClassification("task_clarity", "Task clarity", "How clear was the task");
   assert.equal(result.flagged, false);
-  assert.equal(result.detectorVersion, "physiological-personal-v1");
+  assert.equal(result.detectorVersion, "non-llm-layered-v2");
 });
 
 test("detector flags physiological fields in English and Japanese", () => {
@@ -27,6 +27,13 @@ test("detector classification is driven by fieldKey/label/description together",
   // Neither key nor label mentions anything sensitive, but the description does.
   const result = autoConfirmClassification("q1", "Question 1", "How many hours did you sleep?");
   assert.equal(result.flagged, true);
+});
+
+test("layered detector covers adversarial metadata and value PII", () => {
+  assert.equal(autoConfirmClassification("q", "怒りの強さ").flagged, true);
+  assert.equal(autoConfirmClassification("q", "収入の範囲").flagged, true);
+  assert.equal(autoConfirmClassification("q", "連絡先", "", "user@example.com").flagged, true);
+  assert.equal(autoConfirmClassification("q", "端末の電力", "", "42 watts").flagged, false);
 });
 
 test("autoConfirmAllowed: disabled auto-confirm is always allowed regardless of sensitivity or flags", () => {

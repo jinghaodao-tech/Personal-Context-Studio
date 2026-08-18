@@ -134,17 +134,17 @@ export async function handleExperienceRoute(request: IncomingMessage, response: 
     const value = db.prepare("SELECT id,sensitivity FROM context_values WHERE id=? AND user_confirmed=0 AND reviewed_at IS NULL").get(valueId) as { id: string; sensitivity: string } | undefined;
     if (!value || !["high_confidence", "needs_review", "sensitive_or_conflict"].includes(classification) || !Number.isFinite(confidence) || confidence < 0 || confidence > 1) { send(response, 400, { error: "review_classification_invalid" }); return true; }
     const conflict = (db.prepare("SELECT value_ids_json FROM context_conflicts WHERE status='unresolved'").all() as Array<{ value_ids_json: string }>).some((row) => (parse(row.value_ids_json, []) as unknown[]).includes(valueId));
-    if (classification === "high_confidence" && (confidence < 0.9 || reasons.length === 0 || value.sensitivity !== "normal" || conflict)) { send(response, 409, { error: "review_high_confidence_not_allowed" }); return true; }
-    db.prepare("INSERT INTO pcs_review_classifications(value_id,classification,confidence,reason_json,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(value_id) DO UPDATE SET classification=excluded.classification,confidence=excluded.confidence,reason_json=excluded.reason_json,updated_at=excluded.updated_at").run(valueId, classification, confidence, JSON.stringify(reasons), now());
+    if (classification === "high_confidence" && (confidence < 0.9 || value.sensitivity !== "normal" || conflict)) { send(response, 409, { error: "review_high_confidence_not_allowed" }); return true; }
+    db.prepare("INSERT INTO pcs_review_classifications(value_id,classification,confidence,updated_at) VALUES(?,?,?,?) ON CONFLICT(value_id) DO UPDATE SET classification=excluded.classification,confidence=excluded.confidence,updated_at=excluded.updated_at").run(valueId, classification, confidence, now());
     audit("classify_review_value", { valueId, classification }); send(response, 200, { valueId, classification, confidence }); return true;
   }
   if (request.method === "GET" && url.pathname === "/v1/experience/review-summary") {
-    const rows = db.prepare("SELECT v.id,v.entry_id,v.field_key,v.value_json,v.source,v.sharing,v.sensitivity,v.recorded_at,v.updated_at,c.classification AS stored_classification,c.confidence,c.reason_json FROM context_values v LEFT JOIN pcs_review_classifications c ON c.value_id=v.id WHERE v.user_confirmed=0 AND v.reviewed_at IS NULL ORDER BY v.updated_at DESC").all() as any[];
+    const rows = db.prepare("SELECT v.id,v.entry_id,v.field_key,v.value_json,v.source,v.sharing,v.sensitivity,v.recorded_at,v.updated_at,c.classification AS stored_classification,c.confidence FROM context_values v LEFT JOIN pcs_review_classifications c ON c.value_id=v.id WHERE v.user_confirmed=0 AND v.reviewed_at IS NULL ORDER BY v.updated_at DESC").all() as any[];
     const conflicts = new Set((db.prepare("SELECT value_ids_json FROM context_conflicts WHERE status='unresolved'").all() as any[]).flatMap((row) => parse(row.value_ids_json, [])));
     const items = rows.map((row) => {
       const forcedSensitive = row.sensitivity !== "normal" || conflicts.has(row.id);
       const classification = forcedSensitive ? "sensitive_or_conflict" : row.stored_classification === "high_confidence" && Number(row.confidence) >= 0.9 ? "high_confidence" : "needs_review";
-      return { ...row, classification, confidence: row.confidence ?? null, reasons: parse(row.reason_json, []), hasConflict: conflicts.has(row.id) };
+      return { ...row, classification, confidence: row.confidence ?? null, hasConflict: conflicts.has(row.id) };
     });
     send(response, 200, { items, counts: {
       highConfidence: items.filter((item) => item.classification === "high_confidence").length,
