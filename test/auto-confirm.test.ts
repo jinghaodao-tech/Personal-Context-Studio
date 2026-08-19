@@ -23,6 +23,12 @@ test("detector flags personal-info fields (name, contact, address)", () => {
   assert.equal(autoConfirmClassification("home_address", "住所").flagged, true);
 });
 
+test("keyword layer does not match English tokens inside compound identifiers", () => {
+  assert.equal(autoConfirmClassification("username", "Account handle").layers.keyword, false);
+  assert.equal(autoConfirmClassification("filename", "Export file").layers.keyword, false);
+  assert.equal(autoConfirmClassification("name", "Name").layers.keyword, true);
+});
+
 test("detector classification is driven by fieldKey/label/description together", () => {
   // Neither key nor label mentions anything sensitive, but the description does.
   const result = autoConfirmClassification("q1", "Question 1", "How many hours did you sleep?");
