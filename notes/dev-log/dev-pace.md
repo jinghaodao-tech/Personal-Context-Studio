@@ -49,3 +49,9 @@ updated_at: 2026-08-21
   無いため、実行結果はCI確認待ち。
 - Rust本体へ同じ正規化・分類・Recovery Engineを移植し、`cargo test`で4件すべてpass。
 - Python版はPCS adapterの橋渡しとCI互換テストとして残し、最終的な実行主体をRustへ寄せた。
+
+### 2026-08-21: OTel Collector境界
+
+- `otel-collector/config.yaml`を追加し、OTLP gRPC／HTTPをloopback（127.0.0.1）のみに束縛。
+- cloud exporterやprompt／tool detail収集を有効にせず、ローカルbufferとrotationだけを定義。
+- Collectorはv1では任意前段とし、Rust normalizerが不在・停止してもcoding agent本体を妨げない方針をADR-002に反映。
