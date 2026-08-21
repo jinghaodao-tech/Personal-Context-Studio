@@ -33,9 +33,11 @@
         "calibrate:external-semantic": "node --experimental-strip-types tools/calibrate-external-semantic-grouped.ts",
         "build:secret-eval": "node --experimental-strip-types tools/build-secret-eval.ts",
         "evaluate:secret": "node --experimental-strip-types tools/evaluate-secret-eval.ts",
-        "verify": "npm run build:contracts && npm run typecheck && npm run test && npm run check:migrations && npm run check:encoding",
+        "verify": "npm run build:contracts && npm run build:integration-doctor && npm run typecheck && npm run test && npm run check:migrations && npm run check:encoding",
         "verify:ci": "npm ci && npm run verify",
-        "build:contracts": "tsc packages/integration-contracts/src/index.ts --target ES2022 --module NodeNext --moduleResolution NodeNext --skipLibCheck --declaration --outDir packages/integration-contracts/dist"
+        "prepare": "npm run build:contracts && npm run build:integration-doctor",
+        "build:contracts": "tsc packages/integration-contracts/src/index.ts --target ES2022 --module NodeNext --moduleResolution NodeNext --skipLibCheck --declaration --outDir packages/integration-contracts/dist",
+        "build:integration-doctor": "npm run build:contracts && tsc packages/integration-doctor/src/index.ts --target ES2022 --module NodeNext --moduleResolution NodeNext --skipLibCheck --declaration --rewriteRelativeImportExtensions --outDir packages/integration-doctor/dist"
     },
     "engines": {
         "node": ">=24.0.0"
@@ -47,11 +49,14 @@
     },
     "exports": {
         ".": "./README.md",
-        "./integration-contracts": "./packages/integration-contracts/dist/index.js"
+        "./integration-contracts": "./packages/integration-contracts/dist/index.js",
+        "./integration-doctor": "./packages/integration-doctor/dist/index.js"
     },
     "files": [
         "packages/integration-contracts/dist",
         "packages/integration-contracts/package.json",
+        "packages/integration-doctor/dist",
+        "packages/integration-doctor/package.json",
         "README.md"
     ],
     "version": "1.0.0",
