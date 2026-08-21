@@ -53,5 +53,6 @@ updated_at: 2026-08-21
 ### 2026-08-21: OTel Collector境界
 
 - `otel-collector/config.yaml`を追加し、OTLP gRPC／HTTPをloopback（127.0.0.1）のみに束縛。
-- cloud exporterやprompt／tool detail収集を有効にせず、ローカルbufferとrotationだけを定義。
+- cloud exporterやprompt／tool detail収集を有効にせず、raw OTLPをディスクへ保存せずlocalhostの
+  normalizer endpointへ転送する設定にした。
 - Collectorはv1では任意前段とし、Rust normalizerが不在・停止してもcoding agent本体を妨げない方針をADR-002に反映。
