@@ -35,3 +35,15 @@ updated_at: 2026-08-21
   ため未実行。秘密情報を自動CIから任意URLへ送信しないよう、明示実行用スクリプトに限定した。
 - CIスクリプトをManifestの自動発見（`docs/*-connector.manifest.json`）へ変更。今後は
   新しいManifestを追加するだけで静的チェック対象に含まれる。
+
+### 2026-08-21: Coding-Agent Telemetry v1 offline実装
+
+- 添付設計書に基づきADR-002を追加。
+- `AgentEvent`のcontent-free正規化、verification分類、FAIL→PASSの
+  `RecoveryEpisode`、`DevelopmentSession`、Git snapshot、privacy-reduced aggregateを実装。
+- Codex／Claude Code／Gemini CLIを共通source_agentとして扱い、未知agent・未知eventは
+  crashせずunknownへ落とす。
+- prompt、source code、raw command、tool outputを正規化済みイベントとPCS exportから除外。
+- 既存PCS adapterのdaily importに`development_session` aggregateを任意で追加できるようにした。
+- Python標準unittestで5ケースを追加し、CIで実行する構成にした。ローカル環境にはPython実行系が
+  無いため、実行結果はCI確認待ち。

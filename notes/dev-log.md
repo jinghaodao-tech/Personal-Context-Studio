@@ -84,6 +84,14 @@ updated_at: 2026-08-21
 - checker 3は、実PCSの起動と明示的なprofile／credentialが必要なため未実行。CIから任意の
   PCS URLへ秘密情報を送らない方針を採用し、ローカル明示実行に限定した。
 
+### 2026-08-21: Coding-Agent Telemetry v1
+
+- 添付設計書をADR-002へ落とし込み、dev-pace側にoffline normalizer、verification／recovery、
+  DevelopmentSession、privacy-reduced PCS exportを実装。
+- 実agentのOTLP collector接続は次フェーズとし、raw prompt・command・source contentを保存しない
+  境界を先にテスト可能にした。
+- Python実行環境がこのローカル環境に無いため、Telemetry unit testはCIで実行する。
+
 - GitHub APIへ接続できない環境では、`update:connectors`の最新SHA取得を実行できない。
   CIまたはネットワーク許可済みのWindows環境で実行する。
 - 外部評価セットは本番の自然分布を完全には表さない。合成データ・翻訳データ・外部
