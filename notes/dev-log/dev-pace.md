@@ -33,3 +33,5 @@ updated_at: 2026-08-21
 - `rust.yml`にPCSを固定SHAでcheckoutしてDoctorを実行する静的CIジョブを追加。
 - checker 3（Authentication／Permission）は、PCS実サーバー停止中かつprofile ID未設定の
   ため未実行。秘密情報を自動CIから任意URLへ送信しないよう、明示実行用スクリプトに限定した。
+- CIスクリプトをManifestの自動発見（`docs/*-connector.manifest.json`）へ変更。今後は
+  新しいManifestを追加するだけで静的チェック対象に含まれる。
