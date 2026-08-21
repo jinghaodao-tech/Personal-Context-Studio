@@ -10,6 +10,63 @@ updated_at: 2026-08-21
 運用上の発見を時系列で記録する。実装したこと、検証したこと、未確認のことを
 分けて書き、数字は必ず評価セット・実行条件と一緒に残す。
 
+## 2026-08-21のまとめ
+
+4リポジトリ(PCS、MeTheory、dev-pace_public、TLA/dev-pace-pcs-adapter)にまたがる
+1日分の作業を横断でまとめる。詳細は各リポジトリのdev-log(下記リンク)と、
+PCS側の「個別の作業記録」・「現時点の制約・未完了」内の日付付きエントリを参照。
+
+**PCS本体**
+
+- ADR-022の誤り(「submit_importの実呼び出しが無い」)を訂正。dev-paceが既に
+  実際の`submit_import`コネクタであることを反映。
+- Integration Doctorをimport専用コネクタに対応: `ConnectorManifest.pcsContract`を
+  optional化(`capabilities.readSnapshot`のときのみ必須)、`validateIntegrationImport`
+  をラップする`checkImportContract()`を新規実装。
+- dev-pace用Connector Manifestを作成し、実データ55件で契約検証(全件PASS)。
+- `@huggingface/transformers`を`optionalDependencies`化し、モデル無し環境でも
+  基本検証を実行可能にした。
+- CIに`browser-e2e`・`sensitivity-quality`の独立ジョブを追加。
+- dev-logをPCS／MeTheory／my-search／dev-pace別のファイルへ再編(`notes/dev-log/`)。
+
+**MeTheory**
+
+- PCSの固定pinを最新commitへ更新し、`overrides`(sharp／adm-zip)を追加。
+- connector自動更新の仕組みを新規構築: `docs/connectors.json`にコネクタを登録し、
+  `tools/update-connectors.ts`が登録先の最新SHAをGitHub APIで検知、ズレていれば
+  pinを書き換えて自動PRを開くGitHub Actions(定期実行／手動実行)を追加。mainへの
+  直接pushはしない設計。
+
+**dev-pace_public ／ TLA/dev-pace-pcs-adapter**
+
+- dev-pace_publicの実体を`TLA/dev-pace-pcs-adapter`として特定し、Connector Manifestと
+  静的Doctor CIを追加(67件のimport fixtureがPCS契約validatorを通過)。
+- Coding-Agent Telemetry v1(ADR-002、新規)を設計・実装:
+  - Codex／Claude Code／Gemini CLIのagentイベントを`AgentEvent`へcontent-free正規化
+    (prompt・raw command・tool出力は保存しない)。
+  - Rust本体に`dev-pace.exe agent-server`(`127.0.0.1:8765`)を追加し、正規化済み
+    イベントだけを`outputs/agent_events.jsonl`へ書き込む。
+  - OTel Collectorをloopback限定(`127.0.0.1:4317`/`4318`)の任意前段として追加し、
+    normalizerへJSON形式で転送。raw OTLPはディスクへ保存しない。
+  - failure→recoveryを追跡するRecovery Engineと、privacy-reduced な
+    `DevelopmentSession`集約をPython版・Rust版の両方に実装、双方にunit test。
+  - 実機スモークでHTTP受信の実装バグ(`read_to_end`によるEOF待ちでハングしうる
+    構造)を発見し、Content-Length基準の読み取りへ修正。
+  - checker 3(Authentication／Permission)を実PCSサーバーへ接続して実行し、
+    Connector status PASSを確認(`submit_import`はdry-run経路が無いため設計通り
+    INFO扱い)。
+  - CIに`agent-server-smoke`ジョブを追加し、localhost OTLP受信・200応答・
+    raw情報非保存を自動検証。
+
+**21日時点の未確認・残課題**
+
+- checker 3はCIに組み込んでいない(credentialを自動でCIから送らない方針を優先し、
+  手動実行スクリプトに限定)。
+- GitHub APIへ接続できない環境では、MeTheoryのconnector自動更新が最新SHAを
+  取得できない。
+- PCS・MeTheory・dev-pace-pcs-adapterとも、この日の変更の一部が各リポジトリに
+  未コミットのまま残っていた(翌22日にPCS側は`77267c8`以降でまとめてcommit済み)。
+
 ## これまでの主要な記録
 
 ### 基盤と契約
@@ -166,3 +223,9 @@ updated_at: 2026-08-21
   未実行(実PCSサーバーが必要、静的チェックのみ検証済み)。CIには未統合。
 - commit／push: 未コミット(PCS側の型・checker変更、dev-pace_public側の
   manifestともに)。
+
+## 2026-08-22: 検証用スクラッチの掃除
+
+- PCSルートに誤って含まれていた`verify-dev-pace.mjs`を削除。
+- 削除のみを`ed060cb`(`chore: remove local dev-pace verification scratch`)として
+  ローカルコミットした。その他の作業ツリー変更はこのコミットに含めていない。

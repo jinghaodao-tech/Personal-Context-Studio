@@ -86,3 +86,32 @@ updated_at: 2026-08-21
   endpointがないため、Doctorの設計どおりINFO（未検証）として扱われた。
 - 結果は10 passed、0 warning、0 error、0 fatal、Connector status PASS。
 - 検証後、checker用PCSプロセスを停止。credential自体はログへ記録していない。
+
+### 2026-08-22: Cowork側からの独立検証とtest_telemetry.py修正
+
+- 目的: `C:/Users/jingh/TLA/dev-pace-pcs-adapter`に接続し、上記一連の記録(OTel境界、
+  Rust normalizer、checker 3実接続)を主張どおり動くか独立に再確認する。
+- 変更ファイル: `pcs_adapter/telemetry.py`(新規)、`pcs_adapter/__init__.py`。
+- 実装/発見: `tests/test_telemetry.py`が`ModuleNotFoundError: No module named
+  'pcs_adapter.telemetry'`で失敗することを発見。原因は`pcs_adapter/__init__.py`が
+  兄弟ディレクトリ`pcs-adapter/telemetry.py`(ハイフンのため正式パッケージ名にできない)を
+  execで自分の名前空間に読み込む形になっており、テストが期待する`pcs_adapter.telemetry`
+  という実サブモジュールが存在していなかった。上記2026-08-21のログ自身が「ローカルに
+  Python実行系が無いため実行結果はCI確認待ち」と明記していた箇所で、実際に壊れていた。
+  `pcs_adapter/telemetry.py`を実ファイルとして追加し(`pcs-adapter/telemetry.py`を
+  唯一の実装元としてexecする形は維持)、`__init__.py`は`from .telemetry import *`に
+  簡略化。`pcs-adapter/adapter.py`側の`from telemetry import ...`(兄弟importで
+  ディレクトリ内実行)は変更していない。
+- 検証コマンドと結果: `python3 -m unittest discover -s tests -v` で5/5 pass
+  (修正前は1件がImportErrorで失敗)。あわせてPCS側`npm run build:integration-doctor`と
+  `npx tsc --noEmit`もクリーンなことを再確認。`tools/check-pcs-manifest.mjs`・
+  `tools/run-pcs-doctor-live.mjs`のコードを読み、credentialをログに出していないこと、
+  live版がPCS_ROOT・PCS_API_URL・PCS_CLIENT_ID・PCS_CLIENT_TOKEN・PCS_PROFILE_IDの
+  いずれか欠落時に即throwすることを確認。`fb8ff77`のHTTPパース修正(read_to_endでの
+  EOF待ち→Content-Length基準の読み取り)も差分どおりの正しい修正であることを確認。
+- 未確認／残課題: `src/telemetry.rs`のbody読み取りループはcontent_length自体に
+  上限が無い(header部分は1MB上限あり)。loopback限定のため優先度は低いが未対応。
+  PCSリポジトリのルートに一時的に置かれていたスクラッチ`verify-dev-pace.mjs`は
+  2026-08-22に削除し、`ed060cb`として記録した。
+- commit／push: PCS側のスクラッチ削除はコミット済み。dev-pace側のPython修正は
+  dev-paceリポジトリ側の履歴・push状態を別途確認する。
