@@ -64,6 +64,15 @@ updated_at: 2026-08-21
   `outputs/agent_events.jsonl`へcontent-free形式だけを書き込む。
 - Collector停止時もagent本体を止めない分離構成。Rust unit test 4件は再実行してpass。
 
+### 2026-08-21: agent-server実機スモーク
+
+- `otelcol-contrib`、Claude Code、Gemini CLIはこの環境に未導入。Codex実CLIは存在するが、
+  実セッションのOTLP送信を強制せず、代表的なOTLP/HTTP JSONをlocalhostへ送るスモークを実施。
+- `dev-pace.exe agent-server`が200応答し、`outputs/agent_events.jsonl`へ正規化イベントを保存。
+- prompt／commandに入れたsentinel文字列が保存されず、raw-check PASS。
+- HTTPのEOF待ちと固定Content-Lengthの実装バグを発見・修正し、再ビルド後に`{"accepted":true}`を確認。
+- PCSのintegration-import validatorでdevelopment_session aggregateのdry-runを実施し、PASS。
+
 ### 2026-08-21: checker 3 実接続検証
 
 - PCSをローカル起動し、既存の`profile_803e935193fd494199f894eb39f29129`を明示指定。

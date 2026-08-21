@@ -93,6 +93,13 @@ updated_at: 2026-08-21
 - Python実行環境がこのローカル環境に無いため、Telemetry unit testはCIで実行する。
 - Rust本体への移植を行い、`cargo test`でTelemetry unit test 4件がpass。OTLP Collectorと実agent adapterは次フェーズとして境界を維持している。
 
+### 2026-08-21: agent telemetry実機スモークとPCS dry-run
+
+- 実機環境にCollector／Claude／Geminiが無かったため、実agent送信ではなくOTLP/HTTP代表payloadで
+  localhost endpointを検証。raw情報は保存されなかった。
+- HTTP受信のEOF待ちとContent-Lengthバグを修正し、再ビルド後の200応答を確認。
+- `development_session` aggregateはPCS integration-import validatorを通過。
+
 ### 2026-08-21: dev-pace checker 3 実接続
 
 - ローカルPCSを起動し、既存profileを指定してdev-paceのIntegration Doctor checker 3を実行。
