@@ -7,7 +7,7 @@ const dictionary = process.env.PCS_NAME_DICTIONARY ?? join(root, "data", "name-d
 function run(label: string, env: Record<string, string | undefined>) {
   const result = spawnSync(process.execPath, ["--experimental-strip-types", evaluator], { cwd: root, env: { ...process.env, ...env }, encoding: "utf8" });
   if (result.status !== 0) throw new Error(`gliner_eval_failed:${label}\n${result.stderr}`);
-  const line = result.stdout.trim().split(/\r?\n/).at(-1);
-  return { label, metrics: JSON.parse(line ?? "{}") };
+  const output = result.stdout.trim();
+  return { label, metrics: JSON.parse(output || "{}") };
 }
 console.log(JSON.stringify({ before: run("without_dictionary", { PCS_NAME_DICTIONARY: join(root, "data", "name-dictionary", "__missing__.json") }), after: run("with_dictionary", { PCS_NAME_DICTIONARY: dictionary }) }, null, 2));

@@ -7,7 +7,8 @@ type Item = { text: string; entities: Entity[] };
 const base = process.env.PCS_GLINER_URL ?? "http://127.0.0.1:3001";
 const file = process.env.GLINER_EVAL_FILE ?? join(process.cwd(), "data", "gliner-eval", "japanese-context-span-evaluation.jsonl");
 const limit = Number(process.env.GLINER_EVAL_LIMIT ?? 0);
-const items = (await readFile(file, "utf8")).trim().split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line) as Item).slice(0, limit || undefined);
+const offset = Number(process.env.GLINER_EVAL_OFFSET ?? 0);
+const items = (await readFile(file, "utf8")).trim().split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line) as Item).slice(offset, offset + (limit || undefined));
 function family(label: string): string {
   const value = label.toLocaleLowerCase();
   if (value.includes("health")) return "health";
@@ -32,7 +33,7 @@ const supportedFamilies = new Set(["person", "address", "secret"]);
 for (const item of items) {
   const response = await fetch(new URL("extract", base), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: item.text, labels: ["person name", "phone number", "address", "email address", "date", "url", "account number", "secret"], threshold: Number(process.env.PCS_GLINER_THRESHOLD ?? 0.55) }) });
   const payload = await response.json() as { entities?: Entity[] };
-  const predicted = (Array.isArray(payload.entities) ? payload.entities : []).filter((candidate) => supportedFamilies.has(family(String(candidate.label ?? ""))) && glinerFindingIsSensitive(candidate, Number(process.env.PCS_GLINER_THRESHOLD ?? 0.55)));
+  const predicted = (Array.isArray(payload.entities) ? payload.entities : []).filter((candidate) => supportedFamilies.has(family(String(candidate.label ?? ""))) && glinerFindingIsSensitive(candidate, Number(process.env.PCS_GLINER_THRESHOLD ?? 0.55), item.text));
   const used = new Set<number>();
   const supportedTruth = item.entities.filter((truth) => supportedFamilies.has(family(truth.label)));
   unsupportedExpected += item.entities.length - supportedTruth.length;
