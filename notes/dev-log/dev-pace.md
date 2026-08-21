@@ -47,3 +47,5 @@ updated_at: 2026-08-21
 - 既存PCS adapterのdaily importに`development_session` aggregateを任意で追加できるようにした。
 - Python標準unittestで5ケースを追加し、CIで実行する構成にした。ローカル環境にはPython実行系が
   無いため、実行結果はCI確認待ち。
+- Rust本体へ同じ正規化・分類・Recovery Engineを移植し、`cargo test`で4件すべてpass。
+- Python版はPCS adapterの橋渡しとCI互換テストとして残し、最終的な実行主体をRustへ寄せた。

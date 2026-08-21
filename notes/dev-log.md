@@ -91,6 +91,7 @@ updated_at: 2026-08-21
 - 実agentのOTLP collector接続は次フェーズとし、raw prompt・command・source contentを保存しない
   境界を先にテスト可能にした。
 - Python実行環境がこのローカル環境に無いため、Telemetry unit testはCIで実行する。
+- Rust本体への移植を行い、`cargo test`でTelemetry unit test 4件がpass。OTLP Collectorと実agent adapterは次フェーズとして境界を維持している。
 
 - GitHub APIへ接続できない環境では、`update:connectors`の最新SHA取得を実行できない。
   CIまたはネットワーク許可済みのWindows環境で実行する。
