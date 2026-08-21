@@ -93,6 +93,12 @@ updated_at: 2026-08-21
 - Python実行環境がこのローカル環境に無いため、Telemetry unit testはCIで実行する。
 - Rust本体への移植を行い、`cargo test`でTelemetry unit test 4件がpass。OTLP Collectorと実agent adapterは次フェーズとして境界を維持している。
 
+### 2026-08-21: dev-pace checker 3 実接続
+
+- ローカルPCSを起動し、既存profileを指定してdev-paceのIntegration Doctor checker 3を実行。
+- transport／認証はPASS。`submit_import`は破壊的なdry-runがないためINFO（権限未検証）となったが、
+  Connector statusはPASS。検証後のPCSプロセスは停止した。
+
 - GitHub APIへ接続できない環境では、`update:connectors`の最新SHA取得を実行できない。
   CIまたはネットワーク許可済みのWindows環境で実行する。
 - 外部評価セットは本番の自然分布を完全には表さない。合成データ・翻訳データ・外部

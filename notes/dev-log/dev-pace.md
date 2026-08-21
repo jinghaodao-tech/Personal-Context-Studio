@@ -63,3 +63,12 @@ updated_at: 2026-08-21
 - OTLP/HTTP JSONのbodyをメモリ上で読み、JSON bodyからAgentEventを正規化して
   `outputs/agent_events.jsonl`へcontent-free形式だけを書き込む。
 - Collector停止時もagent本体を止めない分離構成。Rust unit test 4件は再実行してpass。
+
+### 2026-08-21: checker 3 実接続検証
+
+- PCSをローカル起動し、既存の`profile_803e935193fd494199f894eb39f29129`を明示指定。
+- `tools/run-pcs-doctor-live.mjs`でdev-pace Manifestのchecker 3を実行。
+- transport到達性はPASS、認証情報も受理された。`submit_import`は書き込み権限でdry-run
+  endpointがないため、Doctorの設計どおりINFO（未検証）として扱われた。
+- 結果は10 passed、0 warning、0 error、0 fatal、Connector status PASS。
+- 検証後、checker用PCSプロセスを停止。credential自体はログへ記録していない。
