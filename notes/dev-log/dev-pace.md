@@ -73,6 +73,11 @@ updated_at: 2026-08-21
 - HTTPのEOF待ちと固定Content-Lengthの実装バグを発見・修正し、再ビルド後に`{"accepted":true}`を確認。
 - PCSのintegration-import validatorでdevelopment_session aggregateのdry-runを実施し、PASS。
 
+### 2026-08-21: agent-server CI smoke
+
+- 手動で確認したlocalhost OTLP受信・200応答・raw除去を`tools/test-agent-server.mjs`へ移植。
+- Windows CIでrelease binaryを起動し、normalized event存在とsentinel raw文字列不在を自動検証するjobを追加。
+
 ### 2026-08-21: checker 3 実接続検証
 
 - PCSをローカル起動し、既存の`profile_803e935193fd494199f894eb39f29129`を明示指定。
