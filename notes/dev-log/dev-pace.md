@@ -56,3 +56,10 @@ updated_at: 2026-08-21
 - cloud exporterやprompt／tool detail収集を有効にせず、raw OTLPをディスクへ保存せずlocalhostの
   normalizer endpointへ転送する設定にした。
 - Collectorはv1では任意前段とし、Rust normalizerが不在・停止してもcoding agent本体を妨げない方針をADR-002に反映。
+
+### 2026-08-21: Rust normalizer endpoint
+
+- `dev-pace.exe agent-server`で`127.0.0.1:8765`をlistenするHTTP endpointを追加。
+- OTLP/HTTP JSONのbodyをメモリ上で読み、JSON bodyからAgentEventを正規化して
+  `outputs/agent_events.jsonl`へcontent-free形式だけを書き込む。
+- Collector停止時もagent本体を止めない分離構成。Rust unit test 4件は再実行してpass。
