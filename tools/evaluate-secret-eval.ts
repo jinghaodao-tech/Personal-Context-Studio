@@ -1,0 +1,12 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { detectSecretLike } from "../apps/api/src/autoConfirm.ts";
+type SecretCase = { metadata: string; text: string; secret: boolean };
+const path = join(process.cwd(), "tmp", "secret-evaluation.json");
+const cases = JSON.parse(await readFile(path, "utf8")) as SecretCase[];
+const predicted = cases.map((item) => detectSecretLike(item.metadata, item.text));
+const tp = predicted.filter((value, index) => value && cases[index].secret).length;
+const fp = predicted.filter((value, index) => value && !cases[index].secret).length;
+const fn = predicted.filter((value, index) => !value && cases[index].secret).length;
+const precision = tp / Math.max(1, tp + fp), recall = tp / Math.max(1, tp + fn);
+console.log(JSON.stringify({ sampleCount: cases.length, positiveCount: cases.filter((item) => item.secret).length, precision, recall, f1: (2 * precision * recall) / Math.max(1e-9, precision + recall), tp, fp, fn }, null, 2));

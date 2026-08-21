@@ -24,7 +24,7 @@ export async function handleTemplateRoute(request: IncomingMessage, response: Se
   const { db, send, body, text, now, newId, audit, provenance, templateDetail, integrationAuthorized, localAiProvider, upsertConcept } = context;  if (request.method === "POST" && /^v1\/context-templates\/[^/]+\/fields\/[^/]+\/auto-confirm$/.test(parts.join("/"))) {
     const templateId = parts[2]; const fieldKey = parts[4]; const field = db.prepare("SELECT * FROM context_template_fields WHERE template_id=? AND field_key=?").get(templateId, fieldKey) as any;
     if (!field) { send(response, 404, { error: "template_field_not_found" }); return true; }
-    const input = await body(request); const enabled = input.enabled === true; const classification = autoConfirmClassification(field.field_key, field.label, field.description);
+    const input = await body(request); const enabled = input.enabled === true; const classification = await autoConfirmClassification(field.field_key, field.label, field.description);
     const allowed = autoConfirmAllowed({ enabled, sensitivity: field.sensitivity, detectorFlagged: classification.flagged, elevatedConsent: input.elevatedConsent === true });
     if (!allowed.ok) { send(response, 409, { error: allowed.error, detectorVersion: classification.detectorVersion, detectorFlagged: classification.flagged }); return true; }
     const timestamp = now(); const consentAt = enabled && classification.flagged ? timestamp : (enabled ? field.auto_confirm_consent_granted_at : null);

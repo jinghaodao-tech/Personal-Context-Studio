@@ -32,8 +32,8 @@ function metrics(results: boolean[], labels: boolean[]) {
   return { precision: tp / Math.max(1, tp + fp), recall: tp / Math.max(1, tp + fn), tp, fp, fn };
 }
 
-test("ADR-021 labeled evaluation reports layer and OR-gate quality", () => {
-  const outputs = AUTO_CONFIRM_EVALUATION_SET.map((item) => autoConfirmClassification(item.key, item.label, item.description, item.value));
+test("ADR-021 labeled evaluation reports layer and OR-gate quality", async () => {
+  const outputs = await Promise.all(AUTO_CONFIRM_EVALUATION_SET.map((item) => autoConfirmClassification(item.key, item.label, item.description, item.value)));
   const labels = AUTO_CONFIRM_EVALUATION_SET.map((item) => item.sensitive);
   const keyword = metrics(outputs.map((output) => output.layers.keyword), labels);
   const semantic = metrics(outputs.map((output) => output.layers.semantic), labels);

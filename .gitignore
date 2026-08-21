@@ -9,3 +9,6 @@ notes/
 dist/
 *.vsix
 coverage/
+tmp/
+test/_migtest_scratch.mjs
+tmp/

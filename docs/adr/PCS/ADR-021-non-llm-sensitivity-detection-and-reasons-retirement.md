@@ -2,7 +2,48 @@
 
 ## Status
 
-Implemented (deterministic layered detector and reasons retirement).
+Implemented (deterministic layered detector and reasons retirement). The
+semantic layer was upgraded from a trigram heuristic to a real embedding
+model (2026-08-19) after an independent held-out validation set
+(`test/auto-confirm-holdout-validation.test.ts`) showed the trigram approach
+had combined recall 0.176 on paraphrases it was not tuned around, versus 1.00
+on the tunable regression-floor set (`test/auto-confirm-evaluation.test.ts`)
+-- confirming the original ADR text's prediction that a trigram heuristic
+would not generalize. See "Semantic layer: trigram heuristic replaced with
+embeddings" below.
+
+**Verification update (2026-08-20):** the model now runs inside the sandbox
+(the earlier `onnxruntime-node`/NuGet and `npm install` blockers were worked
+around by installing the `@img/sharp-linux-x64`/`sharp-libvips-linux-x64`
+optional binaries explicitly, since the mounted repo's `node_modules` had
+only ever had its Windows binaries installed). All three auto-confirm test
+files pass with the real Ruri-v3-30m model loaded, not a mock.
+
+On the tunable regression floor (`test/auto-confirm-evaluation.test.ts`, 15
+cases), the detector meets its gate (precision >= 0.75, recall >= 0.80) at
+`SEMANTIC_SIMILARITY_THRESHOLD = 0.85`.
+
+On the independent 22-case holdout (`test/auto-confirm-holdout-validation.test.ts`,
+never edited to chase failures), measured combined precision is 0.923 and
+**recall is 0.706** (semantic layer alone: precision 1.0, recall 0.706; the
+keyword and value-PII layers contributed 0 true positives on this set by
+construction, since its cases are paraphrases chosen to avoid literal keyword
+tokens). The previously recorded `0.984 held-out recall` figure in
+`semanticEmbedding.ts` came from a different, larger evaluation set built by
+`tools/build-external-auto-confirm-eval.ts` / `tools/calibrate-auto-confirm.ts`
+/ `tools/calibrate-external-semantic-grouped.ts` and `tools/external-eval-sources.json`,
+not from this repo's own hand-built holdout set. Whether that external set is
+a more representative sample of production text, or whether it happens to be
+easier than this holdout set's deliberately adversarial paraphrases, has not
+been checked. Therefore `0.984` is not this detector's repository validation
+result; `0.706` on an untouched independent set is the more
+trustworthy number available right now.
+
+The holdout run also reproduces the known false positive on
+`medication_reminder_app_name` ("薬" appears inside "服薬リマインダー" as a
+substring): the word-boundary fix applied to the keyword regex's English
+alternation does not extend to its Japanese tokens, since CJK text has no
+word-boundary convention for `\b` to anchor on.
 
 ## Context
 
@@ -99,10 +140,16 @@ of ADR-015.
 
 ## Implementation
 
-- `apps/api/src/autoConfirm.ts` now uses the versioned `non-llm-layered-v2`
-  detector: a cited-category keyword layer, deterministic exemplar similarity,
+- `apps/api/src/autoConfirm.ts` now uses the versioned `non-llm-layered-v3-embeddings`
+  detector: a cited-category keyword layer (with `\b` word boundaries on
+  English tokens -- see below), an embedding-based semantic-similarity layer,
   and value-content PII patterns combined with OR semantics. Ingestion passes
   the actual value to the detector, so metadata and value risks are both gated.
+  `autoConfirmClassification` is now `async`; its two production call sites
+  (`apps/api/src/routes/entries.ts`, `apps/api/src/routes/templates.ts`) were
+  updated accordingly. The candidates route precomputes all field
+  classifications before opening its `BEGIN IMMEDIATE` transaction, rather than
+  awaiting inside the write transaction.
 - Migration `027_retire_review_classification_reasons` removes the unused
   `reason_json` column. The review-classification endpoint no longer requires,
   stores, or displays free-form reasons; high-confidence classification still
@@ -113,10 +160,56 @@ of ADR-015.
 - `test/auto-confirm-evaluation.test.ts` and `tools/evaluate-auto-confirm.ts`
   provide a versioned labeled hold-out set and report per-layer plus combined
   OR-gate precision/recall. The current 15-case set reports combined precision
-  1.00 and recall 1.00 across 15 labeled cases; the semantic layer now has
-  expanded paraphrase examples (precision 1.00, recall 0.80) rather than
-  relying only on keyword overlap. This is a regression floor, not a population accuracy
-  claim, and must grow with reviewed production examples.
+  1.00 and recall 1.00 across 15 labeled cases. This is a regression floor,
+  not a population accuracy claim, and must grow with reviewed production
+  examples -- it is not evidence of generalization, since its cases were
+  written after seeing what the detector failed on (see next point).
+
+### Independent held-out validation found the regression floor was not enough
+
+`test/auto-confirm-holdout-validation.test.ts` is a separate, independently
+constructed set (22 cases, drawn from the eleven 要配慮個人情報 legal
+categories and this product's stated extensions, phrased without looking at
+what the detector currently gets wrong -- see that file's header comment for
+the full method and its stated limits). Run against the trigram-based
+semantic layer, combined recall collapsed to **0.176** (3/17 true positives),
+versus 1.00 on the tunable regression-floor set. This confirmed the original
+semantic-layer design intent in this ADR (embeddings, not trigram overlap)
+was correct, and that the regression-floor set alone cannot be trusted as a
+generalization claim.
+
+The same holdout run also found a real precision bug: the keyword regex had
+no word-boundary anchoring, so the literal token `name` matched inside
+compound field keys like `diet_app_name` (a common naming convention:
+`app_name`, `user_name`, `file_name`). Fixed by wrapping English tokens in
+`\b...\b`; Japanese tokens are left as substring matches since CJK text has
+no analogous word-boundary convention in JavaScript's regex engine.
+
+### Semantic layer: trigram heuristic replaced with embeddings
+
+The trigram `semanticSimilarity` function and its exemplar list are retired.
+`apps/api/src/semanticEmbedding.ts` replaces it with `cl-nagoya/ruri-v3-30m`
+(Apache-2.0, Japanese-specific sentence embeddings, JMTEB avg 74.51 at 37M
+parameters -- notably higher than `intfloat/multilingual-e5-small`'s 69.52 at
+3x the parameter count), loaded via the official ONNX conversion
+(`onnx-community/ruri-v3-30m-ONNX`) through `@huggingface/transformers`, so no
+Python runtime or manual ONNX conversion is required. The exemplar list was
+expanded to one representative phrase per legal category (previously several
+categories -- race, creed, social status, criminal record, victimization,
+disability, juvenile proceedings -- had no exemplar at all), since embeddings
+compare meaning rather than character overlap and should not need multiple
+phrasings per category the way the trigram approach did.
+
+`@huggingface/transformers` pulls in `onnxruntime-node` (depends on a
+vulnerable `adm-zip` under 0.6.0) and `sharp` (vulnerable libvips CVEs under
+0.35.0), both flagged high-severity by `npm audit` with no available fix at
+the versions `@huggingface/transformers` itself pins. Both have fixed
+versions upstream; `package.json` pins them via `overrides` (`sharp:
+^0.35.2`, `adm-zip: ^0.6.0`), verified to bring `npm audit` to zero
+vulnerabilities. `sharp` is pulled in for `@huggingface/transformers`'s image
+pipelines, which this text-only use case never invokes.
+
+**This part is unverified end-to-end**, see Status.
 
 ## Alternatives Considered
 
@@ -177,4 +270,3 @@ than the layered non-LLM design, measured against the same labeled
 evaluation set this ADR requires before shipping the non-LLM layers in the
 first place — the decision is about today's cost/accuracy/latency trade-off,
 not a permanent position against AI-assisted detection.
-

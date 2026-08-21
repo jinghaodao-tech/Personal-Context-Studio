@@ -1,0 +1,37 @@
+[
+  {
+    "id": "NUS-LT-PII-corpus",
+    "url": "https://huggingface.co/datasets/VytautoDidziojoUniversitetas/NUS-LT-PII-corpus",
+    "license": "OpenRAIL",
+    "purpose": "supplemental multilingual special-category evaluation only",
+    "redistribution": "do-not-bundle-raw-data; preserve OpenRAIL terms and attribution"
+  },
+  {
+    "id": "DataFog-pii-small-en",
+    "url": "https://huggingface.co/datasets/DataFog/pii-small-en",
+    "license": "Apache-2.0",
+    "purpose": "supplemental labeled English special-category evaluation only",
+    "redistribution": "do-not-bundle-raw-data; preserve upstream attribution"
+  },
+  {
+    "id": "ai4privacy-pii-masking-health-phi-400k",
+    "url": "https://huggingface.co/datasets/ai4privacy/pii-masking-health-phi-400k",
+    "license": "ai4privacy-commercial; access requires agreement; production terms require contacting Ai4Privacy",
+    "purpose": "supplemental health/medical evaluation only after access approval",
+    "redistribution": "do-not-bundle-raw-data; do-not use as an open/public fixture"
+  },
+  {
+    "id": "ai4privacy-openpii-1.5m",
+    "url": "https://huggingface.co/datasets/ai4privacy/pii-masking-openpii-1.5m",
+    "license": "CC-BY-4.0",
+    "purpose": "supplemental Japanese PII/noise evaluation only",
+    "redistribution": "do-not-bundle-raw-data"
+  },
+  {
+    "id": "akiFQC-japanese-confidential-information-extraction-sft",
+    "url": "https://huggingface.co/datasets/akiFQC/japanese-confidential-information-extraction-sft",
+    "license": "mixed: CC-BY-4.0 (OpenPII), CC-BY-SA-3.0 (ner-wikipedia), generator-terms (synthetic)",
+    "purpose": "supplemental Japanese confidential-information evaluation only",
+    "redistribution": "do-not-bundle-raw-data; preserve each upstream attribution and share-alike terms"
+  }
+]
