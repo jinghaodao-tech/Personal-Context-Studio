@@ -237,7 +237,7 @@ The snapshot and inbound integration routes require a local integration client:
 create one through the management API, store its returned token in that
 client's secret store, and send `X-PCS-Client-Id` plus `Authorization: Bearer`.
 Clients receive only the explicit permissions `read_snapshot`,
-`submit_template_request`, and `submit_import`. The token is returned once,
+`submit_template_request`, `submit_import`, and `append_markdown_template`. The token is returned once,
 stored only as a SHA-256 hash, and can be revoked locally.
 
 Any local tool can submit a `pcs-integration-template-request-v1` payload to
@@ -302,7 +302,8 @@ Set `PCS_REQUIRE_AUTH=1` in unattended or shared local environments to refuse
 startup unless a sufficiently long admin token is configured.
 
 Integration clients use a separate client ID and Bearer token with only
-`read_snapshot`, `submit_template_request`, or `submit_import`. Their tokens
+`read_snapshot`, `submit_template_request`, `submit_import`, or
+`append_markdown_template`. Their tokens
 are returned once, stored only as hashes by PCS, and are not accepted for the
 management API.
 
@@ -327,6 +328,40 @@ const snapshot = await pcs.getAnalysisSnapshot();
 The test suite runs this SDK against a temporary PCS API with real credentials,
 so contract drift between the client and integration routes is detected.
 
+`packages/integration-doctor` (see
+[`docs/adr/PCS/ADR-022-integration-doctor.md`](docs/adr/PCS/ADR-022-integration-doctor.md))
+adds a read-only conformance checker on top of the same contracts and SDK: it
+validates a connector's declared manifest, confirms PCS is reachable and
+loopback-only, probes whether the connector's credentials actually have the
+permissions it claims to need, and checks a response payload against the
+schema validator above. It only ever reports what's wrong; it never repairs
+permissions, rotates tokens, or changes PCS configuration.
+
+### Consuming these packages from another repository
+
+Both packages above are consumed as a pinned git dependency (MeTheory does
+this today), e.g.:
+
+```json
+"personal-context-studio": "git+https://github.com/jinghaodao-tech/Personal-Context-Studio.git#<commit>"
+```
+
+This repository's `prepare` script (`npm run build:contracts && npm run
+build:integration-doctor`) runs automatically when npm installs it as a git
+dependency, so the consumer doesn't need `dist/` pre-built or committed by
+hand -- it's compiled fresh at install time from whichever commit is pinned.
+
+One thing that does **not** carry over automatically: this repository's own
+`overrides` block (currently pinning `sharp` and `adm-zip` past known
+high-severity advisories in `@huggingface/transformers`'s dependency tree).
+npm only reads `overrides` from the package at the root of a given `npm
+install`, never from a dependency's own `package.json` -- so a consumer
+installing this repo as a dependency will resolve the same vulnerable
+versions unless it declares the identical `overrides` block itself. Check
+this repository's current `package.json` for the exact versions and copy
+them into the consumer's `package.json`; `npm audit` after installing is the
+way to confirm it actually took effect.
+
 ## Safety
 
 `private`, `never`, and `highly_sensitive` values are excluded from exports.
@@ -335,8 +370,8 @@ requires a generated confirmation token and writes a local audit record.
 
 ## Scoped integration and preview safety
 
-Integration clients have explicit read_snapshot, submit_template_request, and
-submit_import permissions. A `read_snapshot` client must have an explicit
+Integration clients have explicit read_snapshot, submit_template_request,
+submit_import, and append_markdown_template permissions. A `read_snapshot` client must have an explicit
 Profile ID scope; an unscoped request receives
 `integration_profile_scope_required`, while a different scoped profile receives
 `integration_profile_forbidden`. Tokens are

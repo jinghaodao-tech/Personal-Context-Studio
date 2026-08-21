@@ -8,4 +8,4 @@ export { buildReport, formatReportText } from "./report.ts";
 export { checkManifest, manifestChecksPassed } from "./checks/manifest.ts";
 export { checkTransport, type TransportCheckOptions } from "./checks/transport.ts";
 export { checkAuthenticationAndPermissions, type AuthProbeCredentials, type AuthPermissionCheckOptions } from "./checks/authPermission.ts";
-export { checkSnapshotContract } from "./checks/contract.ts";
+export { checkSnapshotContract, checkImportContract } from "./checks/contract.ts";

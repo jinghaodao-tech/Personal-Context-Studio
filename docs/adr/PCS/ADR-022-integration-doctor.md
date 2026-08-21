@@ -62,6 +62,24 @@ Verified by running `npm run prepare` directly and confirming both
 `dist/index.js` files were freshly rewritten and all 29 tests still pass
 against the regenerated output.
 
+**End-to-end verification, on real hardware (not this sandbox):** after
+pushing (commit `b3195f0`), bumping MeTheory's pinned commit, and running a
+real `npm install` on the user's own machine, `personal-context-studio/integration-doctor`
+resolved successfully and `npx tsc --project tsconfig.json --noEmit` in
+MeTheory passed with zero errors -- the only error blocking this in-sandbox
+throughout (`Cannot find module 'personal-context-studio/integration-doctor'`)
+is gone on a real network. `npm audit` on MeTheory initially still showed
+the same 2 high-severity vulnerabilities (`sharp`, `adm-zip`) already fixed
+in this repo via `overrides` -- because npm `overrides` only apply to the
+package at the root of a given `npm install`, not to a package installed
+*as* a dependency. PCS's own `overrides` fixed PCS's own install; it did
+nothing for MeTheory's install of PCS. Fixed by adding the identical
+`overrides` block to MeTheory's own `package.json`; re-running `npm
+install` there brought MeTheory's audit to 0 vulnerabilities too. Any
+future git-dependency consumer of this repo will need to copy the same
+`overrides` block for the same reason -- worth a line in this repo's own
+README or a follow-up ADR if a third connector is ever added.
+
 Remaining for v0.1: a CLI command wiring all four checkers together end to
 end for manual/CI use (the startup path above already wires them together
 programmatically, just not as a standalone command). Checker 5 (Semantic
@@ -120,8 +138,9 @@ diagnosis is implicit: an integrator finds out their client is missing
 their manifest of assumptions is wrong only when a schema validator throws
 mid-request.
 
-This gap matters more, not less, for a project with no real external
-connector yet, because the first connector (most likely MeTheory) will be
+This gap matters more, not less, because both connectors that already exist
+-- MeTheory (`read_snapshot`, `submit_template_request`) and dev-pace
+(`submit_import`, via a scheduled daily pipeline; see Sequencing) -- were
 built by the same person who built PCS, working from memory of its contract
 rather than from a corrected-by-experience integration. A deterministic
 conformance report catches drift between what a connector's code assumes and
@@ -268,11 +287,13 @@ reads the text.
 ## Sequencing
 
 Building the full five-checker system with dry-run write probes and a
-compatibility matrix now would still mean designing checks 5 (Semantic
-Invariant) against an imagined failure mode, since MeTheory's real usage
-only exercises `read_snapshot` and `submit_template_request` -- it never
-calls `submit_import`, so there is no real write-path failure to design
-Capability Probe's import-side behavior against either. This ADR fixes the
+compatibility matrix now would still mean designing checker 5 (Semantic
+Invariant) against a write-path failure mode the Doctor has never actually
+diagnosed, rather than a verified one: dev-pace is a real, working
+`submit_import` connector (see below), but it has no Connector Manifest yet
+and its contract shape (`IntegrationImportV1`) has no `contractRevision`
+field for checker 4's range logic to key off, unlike the analysis-snapshot
+flow checkers 1-4 were built and verified against. This ADR fixes the
 following order:
 
 - **v0.1 (this ADR's implementation target):** Connector Manifest type,
@@ -286,12 +307,33 @@ following order:
   instead of a hypothetical one. No dry-run write paths, no capability
   probes beyond what checker 3 already exercises via `read_snapshot`, no
   semantic invariant checker, no diagnostic history table.
-- **Before v0.2:** get a real `submit_import` caller -- MeTheory has no
-  present need to push data into PCS, so this still requires either a
-  second connector or a deliberately scoped new MeTheory feature that
-  writes back to PCS. Without one, Capability Probe's import-side dry-run
-  and any Semantic Invariant checks tied to writes stay speculative. This
-  is tracked as separate work, not part of this ADR's implementation.
+- **Before v0.2:** a real `submit_import` caller already exists --
+  dev-pace (`dev-pace_public/pcs-adapter/adapter.py`). A local Rust CLI
+  (`dev-pace`, private repo) records raw window-activity to local JSONL;
+  `tools/aggregate_activity.py` reduces it to app-name-level daily
+  aggregates only, per that repo's own ADR-001 privacy boundary (no window
+  titles, file names, or URLs leave the machine); `pcs-adapter/adapter.py`
+  converts each daily aggregate into an `IntegrationImportV1`-shaped
+  payload (`active_minutes`, `ai_conversation_minutes`,
+  `deep_thinking_minutes`, `window_switch_count`, `idle_minutes`,
+  `away_minutes`, `hourly_active_minutes`) and `POST`s it to
+  `/v1/integration-imports`; `run_daily_pipeline.ps1` chains aggregation
+  and submission together and `register-daily-task.ps1` runs it as a
+  scheduled Windows task. This corrects the claim this section previously
+  made -- there is no need to invent a hypothetical second connector.
+  What's still missing, and is genuinely tracked as separate work outside
+  this ADR's v0.1 scope, is (1) a Connector Manifest for dev-pace
+  (`connectorId: "dev_pace"`, `permissions.required: ["submit_import"]`,
+  `capabilities: { submitImport: true, ... }`) and (2) a Doctor-side change
+  to support import-only connectors: `IntegrationImportV1` has no
+  `contractRevision`/`schemaVersion` field, so `ConnectorManifest.pcsContract`
+  and checker 4's revision-range check -- both built around the
+  analysis-snapshot flow -- need to become optional (or conditioned on
+  `capabilities.readSnapshot`) rather than universally required, plus a
+  `checkImportContract` sibling to the existing snapshot contract check
+  that wraps `validateIntegrationImport` with no revision-range comparison.
+  Only after both land does Capability Probe's import-side dry-run and any
+  Semantic Invariant checks tied to writes stop being speculative.
 - **v0.2+:** capability probes (including `dryRun` additions to
   `/v1/integration-imports` and `/v1/integration-template-requests`,
   explicitly validating without persisting), semantic invariants, and only

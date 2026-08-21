@@ -6,6 +6,7 @@ import { extractDocumentValues } from "../../../packages/entry-extraction/src/in
 import { readMarkdownSnapshot } from "../../../packages/documents/src/index.ts";
 import type { ContextTemplateField } from "../../../packages/domain/src/index.ts";
 import { createEditorAdapter, type EditorAdapterKind } from "../../../packages/integration-adapters/src/index.ts";
+import { runIntegrationDoctorCommand } from "./commands/integration-doctor.ts";
 
 const api = process.env.PCS_API_URL ?? "http://127.0.0.1:8300";
 const json = process.argv.includes("--json");
@@ -76,6 +77,7 @@ async function main() {
   if (command === "integration" && sub === "template-requests") return print(await request("/v1/integration-template-requests"));
   if (command === "integration" && sub === "create-template" && args[0]) return print(await request(`/v1/integration-template-requests/${encodeURIComponent(args[0])}/create-template`, { method: "POST" }));
   if (command === "integration" && sub === "analysis-snapshot") return print(await request(`/v1/context/analysis-snapshot${args[0] ? `?${args[0]}` : ""}`));
+  if (command === "integration" && sub === "doctor" && args[0]) return runIntegrationDoctorCommand(args[0], { json });
   if (command === "adapter" && sub === "context" && args[0] && args[1]) {
     const kind = args[0] as EditorAdapterKind;
     if (!["vscode", "cursor", "obsidian"].includes(kind)) throw new Error("adapter_kind_invalid");

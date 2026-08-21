@@ -12,3 +12,11 @@ coverage/
 tmp/
 test/_migtest_scratch.mjs
 tmp/
+
+# Keep notes private by default; the development log is the intentionally
+# published part of notes/.
+!notes/
+notes/*
+!notes/dev-log.md
+!notes/dev-log/
+!notes/dev-log/**

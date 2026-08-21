@@ -24,7 +24,15 @@ export type ConnectorManifest = {
   connectorId: string;
   displayName: string;
   sourceSystem: string;
-  pcsContract: { minimumRevision: string; maximumRevision: string };
+  // Optional because not every connector has a versioned, revisioned
+  // contract to range-check against: the analysis-snapshot flow does
+  // (PCS_ANALYSIS_CONTRACT_REVISION), but IntegrationImportV1 (the
+  // submit_import contract) has no schemaVersion/contractRevision field at
+  // all -- see ADR-022 Sequencing's "Before v0.2" entry and dev-pace's real
+  // manifest. A connector that declares capabilities.readSnapshot: true is
+  // still expected to provide one; checkManifest enforces that
+  // conditionally rather than this type enforcing it unconditionally.
+  pcsContract?: { minimumRevision: string; maximumRevision: string };
   transport: { protocol: "http"; baseUrl: string; localhostOnly: boolean };
   auth: { mode: string; headers: string[]; profileScoped: boolean };
   permissions: { required: IntegrationPermission[]; optional: IntegrationPermission[] };

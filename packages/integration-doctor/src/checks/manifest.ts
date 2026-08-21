@@ -56,9 +56,23 @@ export function checkManifest(value: unknown): CheckResult[] {
   }
 
   // -- pcsContract --
+  // Optional overall: not every connector has a versioned/revisioned
+  // contract to range-check (submit_import's IntegrationImportV1 has no
+  // contractRevision field, unlike the analysis-snapshot flow -- see
+  // ADR-022 Sequencing's "Before v0.2" entry). Only connectors that claim
+  // capabilities.readSnapshot are required to declare one, since that's
+  // the only capability checker 4's range logic actually applies to today.
   const pcsContract = value.pcsContract;
-  if (!isRecord(pcsContract) || typeof pcsContract.minimumRevision !== "string" || !pcsContract.minimumRevision.trim() || typeof pcsContract.maximumRevision !== "string" || !pcsContract.maximumRevision.trim()) {
-    results.push({ checkId: "manifest.pcsContract", status: "ERROR", code: "PCS-DOC-1006", message: "pcsContract.minimumRevision and pcsContract.maximumRevision must both be non-empty strings.", location: "$.pcsContract" });
+  const capabilitiesForContractCheck = value.capabilities;
+  const claimsReadSnapshotForContractCheck = isRecord(capabilitiesForContractCheck) && capabilitiesForContractCheck.readSnapshot === true;
+  if (pcsContract === undefined) {
+    if (claimsReadSnapshotForContractCheck) {
+      results.push({ checkId: "manifest.pcsContract", status: "ERROR", code: "PCS-DOC-1006", message: "pcsContract is required when capabilities.readSnapshot is true (the Contract Checker's revision-range check needs it).", location: "$.pcsContract" });
+    } else {
+      results.push(pass("manifest.pcsContract", "pcsContract omitted; connector does not claim capabilities.readSnapshot, so no revision range is required."));
+    }
+  } else if (!isRecord(pcsContract) || typeof pcsContract.minimumRevision !== "string" || !pcsContract.minimumRevision.trim() || typeof pcsContract.maximumRevision !== "string" || !pcsContract.maximumRevision.trim()) {
+    results.push({ checkId: "manifest.pcsContract", status: "ERROR", code: "PCS-DOC-1006", message: "pcsContract, if present, must have non-empty pcsContract.minimumRevision and pcsContract.maximumRevision strings.", location: "$.pcsContract" });
   } else {
     results.push(pass("manifest.pcsContract", "pcsContract declares a revision range."));
   }

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { checkSnapshotContract } from "../packages/integration-doctor/src/checks/contract.ts";
+import { checkSnapshotContract, checkImportContract } from "../packages/integration-doctor/src/checks/contract.ts";
 import type { ConnectorManifest } from "../packages/integration-doctor/src/types.ts";
 
 const METHEORY_MANIFEST: ConnectorManifest = {
@@ -106,4 +106,50 @@ test("Contract Checker: legacy V1 snapshot (no contractRevision) reports INFO, n
   const rangeResult = results.find((result) => result.checkId === "contract.revisionRange");
   assert.equal(schemaResult?.status, "PASS");
   assert.equal(rangeResult?.status, "INFO");
+});
+
+test("Contract Checker: a snapshot with contractRevision but a manifest missing pcsContract is a reported ERROR, not a throw", () => {
+  // Defensive path: checkManifest (PCS-DOC-1006) is supposed to prevent a
+  // readSnapshot=true manifest from omitting pcsContract, but this checker
+  // doesn't trust that another checker actually ran first.
+  const manifestWithoutContract: ConnectorManifest = { ...METHEORY_MANIFEST, pcsContract: undefined };
+  const results = checkSnapshotContract(validV3Snapshot, manifestWithoutContract);
+  const rangeResult = results.find((result) => result.checkId === "contract.revisionRange");
+  assert.equal(rangeResult?.status, "ERROR");
+  assert.equal(rangeResult?.code, "PCS-DOC-3001");
+});
+
+// dev-pace's real submit_import connector (dev-pace_public/pcs-adapter/adapter.py's
+// build_import()) -- IntegrationImportV1 shape, no schemaVersion/contractRevision
+// field at all, which is exactly why checkImportContract has no range check.
+const REAL_DEV_PACE_IMPORT = {
+  id: "dev-pace-day-2026-05-24",
+  sourceSystem: "dev_pace",
+  sourceReferenceId: "2026-05-24",
+  createdAt: "2026-08-09T09:04:47.023179Z",
+  payload: {
+    active_minutes: 27.45,
+    ai_conversation_minutes: 41.4,
+    away_minutes: 0.0,
+    date: "2026-05-24",
+    deep_thinking_minutes: 17.0,
+    idle_minutes: 0.0,
+    measurement: { definitionVersion: "dev-pace-daily-v1", measuredAt: "2026-08-09T09:04:47.023179Z", sourceTool: "dev-pace", sourceToolVersion: "0.1.0" },
+    window_switch_count: 14,
+  },
+};
+
+test("checkImportContract: dev-pace's real submit_import payload passes PCS's own validateIntegrationImport", () => {
+  const results = checkImportContract(REAL_DEV_PACE_IMPORT);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].status, "PASS");
+  assert.equal(results[0].code, "PCS-DOC-3002");
+});
+
+test("checkImportContract: an invalid import payload (missing sourceSystem) is a structured ERROR, not an uncaught throw", () => {
+  const { sourceSystem: _sourceSystem, ...withoutSourceSystem } = REAL_DEV_PACE_IMPORT;
+  const results = checkImportContract(withoutSourceSystem);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].status, "ERROR");
+  assert.equal(results[0].code, "PCS-DOC-3002");
 });

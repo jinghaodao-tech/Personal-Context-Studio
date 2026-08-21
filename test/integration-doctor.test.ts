@@ -73,6 +73,44 @@ test("Static Manifest Checker: warns (does not error) when a required permission
   assert.equal(hardError, undefined, "a required-but-uncapable permission should warn, not error");
 });
 
+// dev-pace: a real submit_import-only connector (see ADR-022's corrected
+// Sequencing). No pcsContract -- IntegrationImportV1 has no
+// contractRevision field for a range to key off, unlike the
+// analysis-snapshot flow MeTheory's manifest above validates against.
+const DEV_PACE_MANIFEST: ConnectorManifest = {
+  manifestVersion: "pcs-connector-manifest-v1",
+  connectorId: "dev_pace",
+  displayName: "dev-pace",
+  sourceSystem: "dev_pace",
+  transport: { protocol: "http", baseUrl: "http://127.0.0.1:8300", localhostOnly: true },
+  auth: { mode: "integration-client", headers: ["x-pcs-client-id", "authorization"], profileScoped: true },
+  permissions: { required: ["submit_import"], optional: [] },
+  capabilities: { readSnapshot: false, submitImport: true, submitTemplateRequest: false },
+  endpoints: { submitImport: "POST /v1/integration-imports" },
+  notes: "Import-only connector: submits privacy-reduced daily activity aggregates. Never reads a snapshot, so no pcsContract revision range applies.",
+};
+
+test("Static Manifest Checker: an import-only manifest with no pcsContract passes (capabilities.readSnapshot is false)", () => {
+  const results = checkManifest(DEV_PACE_MANIFEST);
+  const problems = results.filter((result) => result.status === "ERROR" || result.status === "FATAL");
+  assert.deepEqual(problems, [], `expected no ERROR/FATAL, got: ${JSON.stringify(problems, null, 2)}`);
+  const contractResult = results.find((result) => result.checkId === "manifest.pcsContract");
+  assert.equal(contractResult?.status, "PASS");
+});
+
+test("Static Manifest Checker: a manifest claiming capabilities.readSnapshot=true but omitting pcsContract is an ERROR", () => {
+  const results = checkManifest({ ...DEV_PACE_MANIFEST, capabilities: { readSnapshot: true, submitImport: true, submitTemplateRequest: false }, permissions: { required: ["submit_import", "read_snapshot"], optional: [] } });
+  const contractResult = results.find((result) => result.checkId === "manifest.pcsContract");
+  assert.equal(contractResult?.status, "ERROR");
+  assert.equal(contractResult?.code, "PCS-DOC-1006");
+});
+
+test("buildReport: dev-pace's real import-only manifest reports overall PASS", () => {
+  const manifestResults = checkManifest(DEV_PACE_MANIFEST);
+  const report = buildReport("dev_pace", manifestResults);
+  assert.equal(report.status, "PASS");
+});
+
 test("Transport Checker: MeTheory's real baseUrl passes the loopback check without a network call", async () => {
   const results = await checkTransport(METHEORY_MANIFEST, { probeReachability: false });
   const problems = results.filter((result) => result.status === "ERROR" || result.status === "FATAL");

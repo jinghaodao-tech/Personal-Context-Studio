@@ -9,7 +9,7 @@
 // See the equivalent comment in checks/transport.ts: imports the compiled
 // dist because this package is consumed externally as a pinned git
 // dependency, and only dist is published.
-import { validateContextAnalysisSnapshot } from "../../../integration-contracts/dist/index.js";
+import { validateContextAnalysisSnapshot, validateIntegrationImport } from "../../../integration-contracts/dist/index.js";
 import { isRecord, type CheckResult, type ConnectorManifest } from "../types.ts";
 
 type ParsedRevision = { prefix: string; major: number; minor: number | "x" };
@@ -37,20 +37,20 @@ function atMost(actual: ParsedRevision, maximum: ParsedRevision): boolean {
   return (actual.minor === "x" ? 0 : actual.minor) <= maximum.minor;
 }
 
-function checkRevisionRange(actualRevision: string, manifest: ConnectorManifest): CheckResult {
+function checkRevisionRange(actualRevision: string, pcsContract: { minimumRevision: string; maximumRevision: string }): CheckResult {
   const actual = parseRevision(actualRevision);
-  const minimum = parseRevision(manifest.pcsContract.minimumRevision);
-  const maximum = parseRevision(manifest.pcsContract.maximumRevision);
+  const minimum = parseRevision(pcsContract.minimumRevision);
+  const maximum = parseRevision(pcsContract.maximumRevision);
   if (!actual || !minimum || !maximum) {
-    return { checkId: "contract.revisionRange", status: "WARNING", code: "PCS-DOC-3003", message: `Could not compare revisions: one of actual (${JSON.stringify(actualRevision)}), pcsContract.minimumRevision (${JSON.stringify(manifest.pcsContract.minimumRevision)}), or pcsContract.maximumRevision (${JSON.stringify(manifest.pcsContract.maximumRevision)}) does not match the "prefix-vMAJOR.MINOR" convention this comparison understands.` };
+    return { checkId: "contract.revisionRange", status: "WARNING", code: "PCS-DOC-3003", message: `Could not compare revisions: one of actual (${JSON.stringify(actualRevision)}), pcsContract.minimumRevision (${JSON.stringify(pcsContract.minimumRevision)}), or pcsContract.maximumRevision (${JSON.stringify(pcsContract.maximumRevision)}) does not match the "prefix-vMAJOR.MINOR" convention this comparison understands.` };
   }
   if (actual.prefix !== minimum.prefix || actual.prefix !== maximum.prefix) {
     return { checkId: "contract.revisionRange", status: "ERROR", code: "PCS-DOC-3001", message: `contractRevision prefix mismatch: response is ${JSON.stringify(actualRevision)}, manifest range uses prefix ${JSON.stringify(minimum.prefix)}. These are different contract families, not different versions of the same one.` };
   }
   if (!atLeast(actual, minimum) || !atMost(actual, maximum)) {
-    return { checkId: "contract.revisionRange", status: "ERROR", code: "PCS-DOC-3001", message: `PCS returned contractRevision ${JSON.stringify(actualRevision)}, outside the manifest's declared range [${manifest.pcsContract.minimumRevision}, ${manifest.pcsContract.maximumRevision}]. Either PCS moved the contract forward past what this connector was built against, or the manifest's range is stale.` };
+    return { checkId: "contract.revisionRange", status: "ERROR", code: "PCS-DOC-3001", message: `PCS returned contractRevision ${JSON.stringify(actualRevision)}, outside the manifest's declared range [${pcsContract.minimumRevision}, ${pcsContract.maximumRevision}]. Either PCS moved the contract forward past what this connector was built against, or the manifest's range is stale.` };
   }
-  return { checkId: "contract.revisionRange", status: "PASS", code: "PCS-DOC-3001", message: `contractRevision ${JSON.stringify(actualRevision)} is within the manifest's declared range [${manifest.pcsContract.minimumRevision}, ${manifest.pcsContract.maximumRevision}].` };
+  return { checkId: "contract.revisionRange", status: "PASS", code: "PCS-DOC-3001", message: `contractRevision ${JSON.stringify(actualRevision)} is within the manifest's declared range [${pcsContract.minimumRevision}, ${pcsContract.maximumRevision}].` };
 }
 
 /**
@@ -92,6 +92,34 @@ export function checkSnapshotContract(payload: unknown, manifest: ConnectorManif
     results.push({ checkId: "contract.revisionRange", status: "INFO", code: "PCS-DOC-3003", message: "Response has no contractRevision field (this is expected for the legacy V1 snapshot schema, which predates contract revisioning). Range not checked." });
     return results;
   }
-  results.push(checkRevisionRange(contractRevision, manifest));
+  if (!manifest.pcsContract) {
+    // Shouldn't normally happen -- checkManifest (PCS-DOC-1006) requires
+    // pcsContract when capabilities.readSnapshot is true, and this function
+    // is only ever called on a snapshot response. Reported as ERROR rather
+    // than silently skipped, since it means checker 1 either didn't run or
+    // its result was ignored.
+    results.push({ checkId: "contract.revisionRange", status: "ERROR", code: "PCS-DOC-3001", message: `Response declares contractRevision ${JSON.stringify(contractRevision)}, but the manifest has no pcsContract range to check it against.` });
+    return results;
+  }
+  results.push(checkRevisionRange(contractRevision, manifest.pcsContract));
   return results;
+}
+
+/**
+ * Sibling to checkSnapshotContract, for import-only connectors (e.g.
+ * dev-pace's submit_import pipeline). Wraps `validateIntegrationImport`
+ * instead of `validateContextAnalysisSnapshot`. Unlike the snapshot flow,
+ * `IntegrationImportV1` has no schemaVersion/contractRevision field at all
+ * (see ADR-022 Sequencing's "Before v0.2" entry), so there is no equivalent
+ * of checkRevisionRange here -- there is nothing on the payload to range-check
+ * against manifest.pcsContract, which is exactly why pcsContract is optional
+ * for connectors that don't claim capabilities.readSnapshot.
+ */
+export function checkImportContract(payload: unknown): CheckResult[] {
+  try {
+    validateIntegrationImport(payload);
+  } catch (error) {
+    return [{ checkId: "contract.importSchema", status: "ERROR", code: "PCS-DOC-3002", message: `Payload failed PCS's own integration-import validator: ${error instanceof Error ? error.message : String(error)}.`, detail: { payloadSourceSystem: isRecord(payload) ? payload.sourceSystem : undefined } }];
+  }
+  return [{ checkId: "contract.importSchema", status: "PASS", code: "PCS-DOC-3002", message: "Payload passed PCS's integration-import validator." }];
 }
