@@ -22,3 +22,14 @@ updated_at: 2026-08-21
 - `total_observed`は5状態すべてを分母に含める。状態を絞った集計では分母と陽性数を併記する。
 - PCSやMeTheoryへの取り込み失敗は測定処理の失敗と分けて記録する。
 - ローカルのログ・SQLite・生成物は公開前に除外を確認する。
+
+### 2026-08-21: dev-pace_publicのConnector Doctor接続
+
+- 実体を`C:/Users/jingh/TLA/dev-pace-pcs-adapter`として特定。
+- `docs/dev-pace-pcs-connector.manifest.json`を追加し、dev-paceは`submit_import`だけを
+  必須とし、Snapshot読み取りやtemplate requestを要求しないことを宣言。
+- PCS Integration Doctorの静的Manifest検証と、67件のimport fixture契約検証を実行し、
+  Manifestエラー0件・import契約エラー0件を確認。
+- `rust.yml`にPCSを固定SHAでcheckoutしてDoctorを実行する静的CIジョブを追加。
+- checker 3（Authentication／Permission）は、PCS実サーバー停止中かつprofile ID未設定の
+  ため未実行。秘密情報を自動CIから任意URLへ送信しないよう、明示実行用スクリプトに限定した。

@@ -76,6 +76,14 @@ updated_at: 2026-08-21
 
 ## 現時点の制約・未完了
 
+### 2026-08-21: dev-pace_publicのDoctor検証
+
+- dev-pace_publicの実体を`TLA/dev-pace-pcs-adapter`として確認し、Connector Manifestと
+  静的Doctor CIを追加。
+- 67件のimport fixtureはPCSの契約validatorを通過。
+- checker 3は、実PCSの起動と明示的なprofile／credentialが必要なため未実行。CIから任意の
+  PCS URLへ秘密情報を送らない方針を採用し、ローカル明示実行に限定した。
+
 - GitHub APIへ接続できない環境では、`update:connectors`の最新SHA取得を実行できない。
   CIまたはネットワーク許可済みのWindows環境で実行する。
 - 外部評価セットは本番の自然分布を完全には表さない。合成データ・翻訳データ・外部
