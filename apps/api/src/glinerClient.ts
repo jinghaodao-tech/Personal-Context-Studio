@@ -21,7 +21,7 @@ function localUrl(raw: string): URL | null {
   } catch { return null; }
 }
 
-export function glinerFindingIsSensitive(entity: GlinerEntity, threshold = 0.55): boolean {
+export function glinerFindingIsSensitive(entity: GlinerEntity, threshold = 0.55, contextText = ""): boolean {
   if (typeof entity.label !== "string" || !sensitiveLabels.has(entity.label.toLocaleLowerCase()) || Number(entity.score ?? 0) < threshold) return false;
   const label = entity.label.toLocaleLowerCase();
   const text = entity.text ?? "";
@@ -34,6 +34,9 @@ export function glinerFindingIsSensitive(entity: GlinerEntity, threshold = 0.55)
     // cue words while allowing up to seven Japanese characters.
     if (text.length < 2 || text.length > 7 || !/^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}・]+$/u.test(text)) return false;
     if (/[をにはがでとへやも]/u.test(text) || /(状態|確認|情報|記録|内容|について|する|した|して)/u.test(text)) return false;
+    const hasNameCue = /(?:氏名|名前|本人|著者|作成者|担当者|さん|様)/u.test(contextText);
+    if (contextText && !hasNameCue) return false;
+    if (!contextText && !isKnownJapaneseName(text)) return false;
   }
   return true;
 }
@@ -62,3 +65,4 @@ export async function analyzeWithGliner(text: string): Promise<{ available: bool
   } catch { return { available: false, entities: [] }; }
   finally { clearTimeout(timeout); }
 }
+import { isKnownJapaneseName } from "./japaneseNameDictionary.ts";

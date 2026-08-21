@@ -22,6 +22,17 @@
         "check:encoding": "node scripts/check-encoding.mjs",
         "check:migrations": "node --experimental-strip-types scripts/check-migrations.mjs",
         "evaluate:auto-confirm": "node --experimental-strip-types tools/evaluate-auto-confirm.ts",
+        "calibrate:auto-confirm": "node --experimental-strip-types tools/calibrate-auto-confirm.ts",
+        "build:external-auto-confirm-eval": "node --experimental-strip-types tools/build-external-auto-confirm-eval.ts",
+        "build:japanese-semantic-eval": "node --experimental-strip-types tools/build-japanese-semantic-eval.ts",
+        "build:japanese-context-span-eval": "node --experimental-strip-types tools/build-japanese-context-span-eval.ts",
+    "evaluate:gliner-context-span": "node --experimental-strip-types tools/evaluate-gliner-context-span.ts",
+    "compare:gliner-context-span": "node --experimental-strip-types tools/compare-gliner-context-span.ts",
+    "build:japanese-name-dictionary": "node --experimental-strip-types tools/build-japanese-name-dictionary.ts",
+        "evaluate:external-auto-confirm": "node --experimental-strip-types tools/evaluate-external-auto-confirm-eval.ts",
+        "calibrate:external-semantic": "node --experimental-strip-types tools/calibrate-external-semantic-grouped.ts",
+        "build:secret-eval": "node --experimental-strip-types tools/build-secret-eval.ts",
+        "evaluate:secret": "node --experimental-strip-types tools/evaluate-secret-eval.ts",
         "verify": "npm run build:contracts && npm run typecheck && npm run test && npm run check:migrations && npm run check:encoding",
         "verify:ci": "npm ci && npm run verify",
         "build:contracts": "tsc packages/integration-contracts/src/index.ts --target ES2022 --module NodeNext --moduleResolution NodeNext --skipLibCheck --declaration --outDir packages/integration-contracts/dist"
@@ -51,8 +62,13 @@
         "test": "test"
     },
     "dependencies": {
+        "@huggingface/transformers": "^4.2.0",
         "playwright-core": "^1.62.1",
         "undici-types": "^7.8.0"
+    },
+    "overrides": {
+        "sharp": "^0.35.2",
+        "adm-zip": "^0.6.0"
     },
     "repository": {
         "type": "git",

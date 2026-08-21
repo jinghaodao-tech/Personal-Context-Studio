@@ -426,3 +426,6 @@ different. Detailed output includes purpose, recorded time, provenance,
 confirmation and review state, reconfirmation deadline, lifecycle, and
 limitations. Reconfirmation updates the current value's timestamps, while
 conflict resolution must remain explicit and auditable.
+# Japanese name dictionary and GLiNER evaluation
+
+辞書を再生成する場合は `npm run build:japanese-name-dictionary` を実行します。姓・男性名・女性名・読みを分離し、ノイズ候補を除外したうえで、MIT ライセンスの元データ情報を `data/name-dictionary/names.json` に記録します。GLiNERの辞書導入前後は `npm run compare:gliner-context-span` で同じ評価セットを比較できます。
